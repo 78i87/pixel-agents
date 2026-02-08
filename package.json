@@ -35,6 +35,17 @@
           "name": "Arcadia"
         }
       ]
+    },
+    "configuration": {
+      "title": "Arcadia",
+      "properties": {
+        "arcadia.sessionMaxAgeSecs": {
+          "type": "number",
+          "default": 180,
+          "minimum": 0,
+          "description": "Only show agents whose JSONL file was modified within this many seconds. Set to 0 to show all."
+        }
+      }
     }
   },
   "scripts": {

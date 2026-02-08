@@ -5,50 +5,33 @@ import * as os from 'os';
 
 const CLAUDE_TERMINAL_PATTERN = /^Claude Code #(\d+)$/;
 
-interface FolderInfo {
-	id: string;
-	name: string;
-	path: string;
-}
-
-interface AgentFolderMapping {
-	agentId: number;
-	folderId: string;
-}
-
-interface PersistedAgentState {
-	sessionId: string;
+interface AgentState {
+	id: number;
+	terminalRef: vscode.Terminal;
 	projectDir: string;
-	folderId: string;
-	lastFile?: string;  // last known JSONL path for reclaiming after reload
+	jsonlFile: string;
+	fileOffset: number;
+	lineBuffer: string;
+	activeToolIds: Set<string>;
+	activeToolStatuses: Map<string, string>;
+	isWaiting: boolean;
 }
 
 class ArcadiaViewProvider implements vscode.WebviewViewProvider {
-	private nextId = 1;
-	private terminals = new Map<number, vscode.Terminal>();
+	private nextAgentId = 1;
+	private nextTerminalIndex = 1;
+	private agents = new Map<number, AgentState>();
+	private claimedFiles = new Set<string>();
 	private webviewView: vscode.WebviewView | undefined;
-	private folders: FolderInfo[] = [];
-	private agentFolders = new Map<number, string>(); // agentId → folderId
-	private movingAgents = new Set<number>(); // agents currently being moved (suppress close event)
 
-	// Transcript watching state
-	private agentSessionIds = new Map<number, string>();     // agentId → session UUID (--session-id)
-	private watchedFiles = new Map<number, string>();        // agentId → current JSONL path
-	private agentProjectDirs = new Map<number, string>();    // agentId → project dir path
-	private claimedFiles = new Set<string>();                // JSONL paths claimed by any agent
-	private knownFilesAtLaunch = new Map<number, Set<string>>(); // agentId → pre-existing files
-	private dirScanTimers = new Map<number, ReturnType<typeof setInterval>>();
-	private lastDataTime = new Map<number, number>();        // agentId → Date.now() of last data
+	// Per-agent timers
 	private fileWatchers = new Map<number, fs.FSWatcher>();
 	private pollingTimers = new Map<number, ReturnType<typeof setInterval>>();
-	private fileOffsets = new Map<number, number>();
-	private lineBuffers = new Map<number, string>();
-	private activeToolIds = new Map<number, Set<string>>();
 	private waitingTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
-	// Cached status for webview reconnect
-	private activeToolStatuses = new Map<number, Map<string, string>>(); // agentId → (toolId → status)
-	private agentWaitingStatus = new Map<number, boolean>();             // agentId → is waiting
+	// Per-terminal scan state (runs continuously to pick up new JSONL files)
+	private terminalProjectDirs = new Map<vscode.Terminal, string>();
+	private terminalScanTimers = new Map<vscode.Terminal, ReturnType<typeof setInterval>>();
 
 	constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -61,305 +44,241 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 		webviewView.webview.options = { enableScripts: true };
 		webviewView.webview.html = getWebviewContent(webviewView.webview, this.extensionUri);
 
-		// Adopt any existing Claude Code terminals
 		this.adoptExistingTerminals();
-
-		// Ensure a default folder exists
-		this.ensureDefaultFolder();
 
 		webviewView.webview.onDidReceiveMessage((message) => {
 			if (message.type === 'openClaude') {
-				const folderId = message.folderId as string | undefined;
-				const folderPath = message.folderPath as string | undefined;
-				const id = this.nextId++;
-				const terminal = this.createClaudeTerminal(id, folderPath);
-				terminal.show();
-				this.terminals.set(id, terminal);
-				const assignedFolderId = folderId || (this.folders.length > 0 ? this.folders[0].id : '');
-				this.agentFolders.set(id, assignedFolderId);
-				webviewView.webview.postMessage({ type: 'agentCreated', id, folderId: assignedFolderId });
-
-				// Persist state for recovery after extension reload
-				const sessionId = this.agentSessionIds.get(id);
-				const projectDir = this.agentProjectDirs.get(id);
-				if (sessionId && projectDir) {
-					this.persistAgentState(id, { sessionId, projectDir, folderId: assignedFolderId });
-				}
+				this.launchNewTerminal();
 			} else if (message.type === 'focusAgent') {
-				const terminal = this.terminals.get(message.id);
-				if (terminal) {
-					terminal.show();
+				const agent = this.agents.get(message.id);
+				if (agent) {
+					agent.terminalRef.show();
 				}
 			} else if (message.type === 'closeAgent') {
-				const terminal = this.terminals.get(message.id);
-				if (terminal) {
-					terminal.dispose();
+				const agent = this.agents.get(message.id);
+				if (agent) {
+					agent.terminalRef.dispose();
 				}
 			} else if (message.type === 'webviewReady') {
 				this.sendExistingAgents();
-			} else if (message.type === 'addFolder') {
-				this.handleAddFolder();
-			} else if (message.type === 'moveAgent') {
-				this.handleMoveAgent(
-					message.agentId as number,
-					message.targetFolderId as string,
-					message.targetPath as string,
-					message.keepAccess as boolean,
-					message.sourcePath as string | undefined,
-					message.continueConversation as boolean,
-				);
-			}
-		});
-
-		// Clean up buttons when terminals are closed (skip agents being moved)
-		vscode.window.onDidCloseTerminal((closed) => {
-			for (const [id, terminal] of this.terminals) {
-				if (terminal === closed) {
-					if (this.movingAgents.has(id)) { break; }
-					this.stopWatching(id);
-					this.terminals.delete(id);
-					this.agentFolders.delete(id);
-					webviewView.webview.postMessage({ type: 'agentClosed', id });
-					break;
+			} else if (message.type === 'openSessionsFolder') {
+				const projectDir = this.getProjectDirPath();
+				if (projectDir && fs.existsSync(projectDir)) {
+					vscode.env.openExternal(vscode.Uri.file(projectDir));
 				}
 			}
 		});
 
-		// Detect Claude Code terminals opened outside the extension
+		vscode.window.onDidCloseTerminal((closed) => {
+			// Remove all agents on this terminal
+			for (const [id, agent] of this.agents) {
+				if (agent.terminalRef === closed) {
+					this.removeAgent(id);
+					webviewView.webview.postMessage({ type: 'agentClosed', id });
+				}
+			}
+			this.cleanupTerminalScan(closed);
+		});
+
 		vscode.window.onDidOpenTerminal((terminal) => {
 			const match = terminal.name.match(CLAUDE_TERMINAL_PATTERN);
 			if (match && !this.isTracked(terminal)) {
-				const id = parseInt(match[1], 10);
-				this.terminals.set(id, terminal);
-				if (id >= this.nextId) {
-					this.nextId = id + 1;
+				const idx = parseInt(match[1], 10);
+				if (idx >= this.nextTerminalIndex) {
+					this.nextTerminalIndex = idx + 1;
 				}
-				const folderId = this.folders.length > 0 ? this.folders[0].id : '';
-				this.agentFolders.set(id, folderId);
-				webviewView.webview.postMessage({ type: 'agentCreated', id, folderId });
-				this.startWatchingAgent(id);
+				this.startTerminalFileScan(terminal);
 			}
 		});
 	}
 
-	private ensureDefaultFolder() {
-		if (this.folders.length === 0) {
-			const workspaceFolders = vscode.workspace.workspaceFolders;
-			if (workspaceFolders && workspaceFolders.length > 0) {
-				const wsPath = workspaceFolders[0].uri.fsPath;
-				this.folders.push({
-					id: 'default',
-					name: path.basename(wsPath),
-					path: wsPath,
-				});
-			}
-		}
-	}
-
-	private async handleAddFolder() {
-		const uris = await vscode.window.showOpenDialog({
-			canSelectFolders: true,
-			canSelectFiles: false,
-			canSelectMany: false,
-			openLabel: 'Select Folder',
-		});
-		if (uris && uris.length > 0) {
-			const folderPath = uris[0].fsPath;
-			const folder: FolderInfo = {
-				id: crypto.randomUUID(),
-				name: path.basename(folderPath),
-				path: folderPath,
-			};
-			this.folders.push(folder);
-			this.webviewView?.webview.postMessage({
-				type: 'folderAdded',
-				id: folder.id,
-				name: folder.name,
-				path: folder.path,
-			});
-		}
-	}
-
-	private handleMoveAgent(
-		agentId: number,
-		targetFolderId: string,
-		targetPath: string,
-		keepAccess: boolean,
-		sourcePath: string | undefined,
-		continueConversation: boolean,
-	) {
-		const oldTerminal = this.terminals.get(agentId);
-		if (!oldTerminal) { return; }
-
-		// Claude Code cannot change its primary cwd mid-session, and
-		// terminal.sendText() cannot submit commands to Ink's raw-mode stdin.
-		// Instead, dispose the terminal and restart in the new directory.
-		this.movingAgents.add(agentId);
-		this.stopWatching(agentId);
-		oldTerminal.dispose();
-
-		const addDirs = keepAccess && sourcePath ? [sourcePath] : undefined;
-		const newTerminal = this.createClaudeTerminal(agentId, targetPath, addDirs, continueConversation);
-		newTerminal.show();
-		this.terminals.set(agentId, newTerminal);
-		this.agentFolders.set(agentId, targetFolderId);
-		this.movingAgents.delete(agentId);
-
-		this.webviewView?.webview.postMessage({
-			type: 'agentMoved',
-			agentId,
-			targetFolderId,
-		});
-
-		// Persist updated state after move
-		const sessionId = this.agentSessionIds.get(agentId);
-		const projectDir = this.agentProjectDirs.get(agentId);
-		if (sessionId && projectDir) {
-			this.persistAgentState(agentId, { sessionId, projectDir, folderId: targetFolderId });
-		}
-	}
-
-	private createClaudeTerminal(id: number, cwd?: string, addDirs?: string[], continueSession = false): vscode.Terminal {
+	private launchNewTerminal() {
+		const idx = this.nextTerminalIndex++;
+		const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		const terminal = vscode.window.createTerminal({
-			name: `Claude Code #${id}`,
+			name: `Claude Code #${idx}`,
 			cwd,
 		});
+		terminal.show();
 
-		// Use --session-id with a fresh UUID so the JSONL filename is predictable.
-		// Skip when --continue is used (it resumes the last session's own ID).
-		const sessionId = continueSession ? undefined : crypto.randomUUID();
+		const sessionId = crypto.randomUUID();
+		terminal.sendText(`claude --session-id ${sessionId}`);
+		this.startTerminalFileScan(terminal, sessionId, cwd);
+	}
+
+	private startTerminalFileScan(terminal: vscode.Terminal, sessionId?: string, cwd?: string) {
+		const projectDir = this.getProjectDirPath(cwd);
+		if (!projectDir) {
+			console.log(`[Arcadia] No project dir for terminal ${terminal.name}`);
+			return;
+		}
+		this.terminalProjectDirs.set(terminal, projectDir);
+		console.log(`[Arcadia] Terminal ${terminal.name}: scanning dir ${projectDir}`);
+
+		const scanInterval = setInterval(() => this.scanForNewFiles(terminal, sessionId), 1000);
+		this.terminalScanTimers.set(terminal, scanInterval);
+	}
+
+	private isFileRecent(filePath: string): boolean {
+		const maxAge = vscode.workspace.getConfiguration('arcadia').get<number>('sessionMaxAgeSecs', 180);
+		if (maxAge === 0) { return true; } // 0 = show all
+		try {
+			const mtime = fs.statSync(filePath).mtimeMs;
+			return (Date.now() - mtime) < maxAge * 1000;
+		} catch { return false; }
+	}
+
+	private scanForNewFiles(terminal: vscode.Terminal, sessionId?: string) {
+		const projectDir = this.terminalProjectDirs.get(terminal);
+		if (!projectDir) { return; }
+
+		// Session-ID deterministic lookup (always claim own file regardless of age)
 		if (sessionId) {
-			this.agentSessionIds.set(id, sessionId);
+			const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
+			try {
+				if (fs.existsSync(expectedFile) && !this.claimedFiles.has(expectedFile)) {
+					console.log(`[Arcadia] Terminal ${terminal.name}: found session file ${sessionId}.jsonl`);
+					this.createAgentFromFile(terminal, expectedFile, projectDir);
+				}
+			} catch { /* file may not exist yet */ }
+			// Session-ID terminals only claim their own file; /clear files are
+			// picked up by the continuous generic scan below.
 		}
 
-		const parts = ['claude'];
-		if (sessionId) {
-			parts.push('--session-id', sessionId);
-		}
-		if (addDirs) {
-			for (const dir of addDirs) {
-				parts.push(`--add-dir "${dir}"`);
+		// Generic scan: pick up any unclaimed JSONL files in the project dir.
+		// This handles adopted terminals (no session ID) and /clear files.
+		// Only claim files modified within the configured max age.
+		let files: string[];
+		try {
+			files = fs.readdirSync(projectDir)
+				.filter(f => f.endsWith('.jsonl'))
+				.map(f => path.join(projectDir, f));
+		} catch { return; }
+
+		for (const file of files) {
+			if (!this.claimedFiles.has(file) && this.isFileRecent(file)) {
+				console.log(`[Arcadia] Terminal ${terminal.name}: found unclaimed file ${path.basename(file)}`);
+				this.createAgentFromFile(terminal, file, projectDir);
 			}
 		}
-		if (continueSession) {
-			parts.push('--continue');
+	}
+
+	private createAgentFromFile(terminal: vscode.Terminal, filePath: string, projectDir: string) {
+		const id = this.nextAgentId++;
+
+		const agent: AgentState = {
+			id,
+			terminalRef: terminal,
+			projectDir,
+			jsonlFile: filePath,
+			fileOffset: 0,
+			lineBuffer: '',
+			activeToolIds: new Set(),
+			activeToolStatuses: new Map(),
+			isWaiting: false,
+		};
+
+		this.agents.set(id, agent);
+		this.claimedFiles.add(filePath);
+
+		console.log(`[Arcadia] Agent ${id}: created, watching ${path.basename(filePath)}`);
+
+		this.webviewView?.webview.postMessage({ type: 'agentCreated', id });
+		this.startFileWatching(id, filePath);
+
+		// Initial read
+		this.readNewLines(id);
+	}
+
+	private startFileWatching(agentId: number, filePath: string) {
+		// Primary: fs.watch
+		try {
+			const watcher = fs.watch(filePath, () => {
+				this.readNewLines(agentId);
+			});
+			this.fileWatchers.set(agentId, watcher);
+		} catch (e) {
+			console.log(`[Arcadia] fs.watch failed for agent ${agentId}: ${e}`);
 		}
-		terminal.sendText(parts.join(' '));
-		this.startWatchingAgent(id, cwd);
-		return terminal;
+
+		// Backup: poll every 2s
+		const interval = setInterval(() => {
+			if (!this.agents.has(agentId)) { clearInterval(interval); return; }
+			this.readNewLines(agentId);
+		}, 2000);
+		this.pollingTimers.set(agentId, interval);
+	}
+
+	private removeAgent(agentId: number) {
+		const agent = this.agents.get(agentId);
+		if (!agent) { return; }
+
+		// Stop file watching
+		this.fileWatchers.get(agentId)?.close();
+		this.fileWatchers.delete(agentId);
+		const pt = this.pollingTimers.get(agentId);
+		if (pt) { clearInterval(pt); }
+		this.pollingTimers.delete(agentId);
+
+		// Cancel waiting timer
+		this.cancelWaitingTimer(agentId);
+
+		// Unclaim file
+		this.claimedFiles.delete(agent.jsonlFile);
+
+		// Remove from maps
+		this.agents.delete(agentId);
+	}
+
+	private cleanupTerminalScan(terminal: vscode.Terminal) {
+		const timer = this.terminalScanTimers.get(terminal);
+		if (timer) { clearInterval(timer); }
+		this.terminalScanTimers.delete(terminal);
+		this.terminalProjectDirs.delete(terminal);
 	}
 
 	private adoptExistingTerminals() {
-		const saved = this.getPersistedStates();
-		const adoptedIds = new Set<string>();
-
 		for (const terminal of vscode.window.terminals) {
 			const match = terminal.name.match(CLAUDE_TERMINAL_PATTERN);
 			if (match) {
-				const id = parseInt(match[1], 10);
-				this.terminals.set(id, terminal);
-				if (id >= this.nextId) {
-					this.nextId = id + 1;
+				const idx = parseInt(match[1], 10);
+				if (idx >= this.nextTerminalIndex) {
+					this.nextTerminalIndex = idx + 1;
 				}
-
-				const key = String(id);
-				const persisted = saved[key];
-				if (persisted) {
-					adoptedIds.add(key);
-					this.agentSessionIds.set(id, persisted.sessionId);
-					this.agentFolders.set(id, persisted.folderId);
-					this.startWatchingAdoptedAgent(id, persisted);
-				} else {
-					// No persisted state — assign default folder and do generic scanning
-					const folderId = this.folders.length > 0 ? this.folders[0].id : 'default';
-					this.agentFolders.set(id, folderId);
-					this.startWatchingAgent(id);
-				}
+				this.startTerminalFileScan(terminal);
 			}
 		}
-
-		// Clean up persisted entries for terminals that no longer exist
-		const states = this.getPersistedStates();
-		let cleaned = false;
-		for (const key of Object.keys(states)) {
-			if (!adoptedIds.has(key) && !this.terminals.has(parseInt(key, 10))) {
-				delete states[key];
-				cleaned = true;
-			}
-		}
-		if (cleaned) {
-			this.context.workspaceState.update('arcadia.agentStates', states);
-		}
-	}
-
-	private startWatchingAdoptedAgent(agentId: number, saved: PersistedAgentState) {
-		const projectDir = saved.projectDir;
-		if (!fs.existsSync(projectDir)) {
-			console.log(`[Arcadia] Adopted agent ${agentId}: project dir gone, falling back to generic`);
-			this.startWatchingAgent(agentId);
-			return;
-		}
-		this.agentProjectDirs.set(agentId, projectDir);
-
-		// Snapshot existing files, but EXCLUDE the agent's own session file and lastFile
-		// so Phase 1 / Phase 2 can immediately reclaim them
-		const existing = new Set<string>();
-		try {
-			for (const f of fs.readdirSync(projectDir)) {
-				if (f.endsWith('.jsonl')) {
-					existing.add(path.join(projectDir, f));
-				}
-			}
-		} catch { /* dir may not exist yet */ }
-
-		// Remove the agent's own files from the exclusion set so they can be claimed
-		const sessionFile = path.join(projectDir, `${saved.sessionId}.jsonl`);
-		existing.delete(sessionFile);
-		if (saved.lastFile) {
-			existing.delete(saved.lastFile);
-		}
-
-		this.knownFilesAtLaunch.set(agentId, existing);
-		console.log(`[Arcadia] Adopted agent ${agentId}: watching dir ${projectDir} (session=${saved.sessionId}, ${existing.size} excluded files)`);
-
-		const scanInterval = setInterval(() => this.scanForNewFile(agentId), 1000);
-		this.dirScanTimers.set(agentId, scanInterval);
 	}
 
 	private sendExistingAgents() {
 		if (!this.webviewView) { return; }
-		const agents: AgentFolderMapping[] = [];
-		for (const [agentId, folderId] of this.agentFolders) {
-			agents.push({ agentId, folderId });
+		const agentIds: number[] = [];
+		for (const id of this.agents.keys()) {
+			agentIds.push(id);
 		}
-		agents.sort((a, b) => a.agentId - b.agentId);
+		agentIds.sort((a, b) => a - b);
 		this.webviewView.webview.postMessage({
 			type: 'existingAgents',
-			agents,
-			folders: this.folders,
+			agents: agentIds,
 		});
 
-		// Re-send cached tool/status state for webview reconnect
 		this.sendCurrentAgentStatuses();
 	}
 
 	private sendCurrentAgentStatuses() {
 		if (!this.webviewView) { return; }
-		for (const [agentId] of this.terminals) {
+		for (const [agentId, agent] of this.agents) {
 			// Re-send active tools
-			const tools = this.activeToolStatuses.get(agentId);
-			if (tools) {
-				for (const [toolId, status] of tools) {
-					this.webviewView.webview.postMessage({
-						type: 'agentToolStart',
-						id: agentId,
-						toolId,
-						status,
-					});
-				}
+			for (const [toolId, status] of agent.activeToolStatuses) {
+				this.webviewView.webview.postMessage({
+					type: 'agentToolStart',
+					id: agentId,
+					toolId,
+					status,
+				});
 			}
 			// Re-send waiting status
-			if (this.agentWaitingStatus.get(agentId)) {
+			if (agent.isWaiting) {
 				this.webviewView.webview.postMessage({
 					type: 'agentStatus',
 					id: agentId,
@@ -370,230 +289,38 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private isTracked(terminal: vscode.Terminal): boolean {
-		for (const t of this.terminals.values()) {
-			if (t === terminal) { return true; }
+		if (this.terminalScanTimers.has(terminal)) { return true; }
+		for (const agent of this.agents.values()) {
+			if (agent.terminalRef === terminal) { return true; }
 		}
 		return false;
 	}
 
-	// --- Persisted agent state ---
-
-	private getPersistedStates(): Record<string, PersistedAgentState> {
-		return this.context.workspaceState.get('arcadia.agentStates', {});
-	}
-
-	private persistAgentState(agentId: number, state: PersistedAgentState) {
-		const states = this.getPersistedStates();
-		states[String(agentId)] = state;
-		this.context.workspaceState.update('arcadia.agentStates', states);
-	}
-
-	private removePersistedState(agentId: number) {
-		const states = this.getPersistedStates();
-		delete states[String(agentId)];
-		this.context.workspaceState.update('arcadia.agentStates', states);
-	}
-
-	private updatePersistedFile(agentId: number, filePath: string) {
-		const states = this.getPersistedStates();
-		const key = String(agentId);
-		if (states[key]) {
-			states[key].lastFile = filePath;
-			this.context.workspaceState.update('arcadia.agentStates', states);
-		}
-	}
-
-	// --- Transcript JSONL watching ---
+	// --- Transcript JSONL reading ---
 
 	private getProjectDirPath(cwd?: string): string | null {
 		const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		if (!workspacePath) { return null; }
-		// C:\Users\Dev\Desktop\Arcadia → C--Users-Dev-Desktop-Arcadia
 		const dirName = workspacePath.replace(/[:\\/]/g, '-');
 		return path.join(os.homedir(), '.claude', 'projects', dirName);
 	}
 
-	private startWatchingAgent(agentId: number, cwd?: string) {
-		const projectDir = this.getProjectDirPath(cwd);
-		if (!projectDir) {
-			console.log(`[Arcadia] No project dir for agent ${agentId}, cwd=${cwd}`);
-			return;
-		}
-		this.agentProjectDirs.set(agentId, projectDir);
-
-		// Snapshot existing .jsonl files so we don't claim old ones
-		const existing = new Set<string>();
+	private readNewLines(agentId: number) {
+		const agent = this.agents.get(agentId);
+		if (!agent) { return; }
 		try {
-			if (fs.existsSync(projectDir)) {
-				for (const f of fs.readdirSync(projectDir)) {
-					if (f.endsWith('.jsonl')) {
-						existing.add(path.join(projectDir, f));
-					}
-				}
-			}
-		} catch { /* dir may not exist yet */ }
-		this.knownFilesAtLaunch.set(agentId, existing);
-		console.log(`[Arcadia] Agent ${agentId}: watching dir ${projectDir} (${existing.size} existing files)`);
+			const stat = fs.statSync(agent.jsonlFile);
+			if (stat.size <= agent.fileOffset) { return; }
 
-		// Poll directory for new .jsonl files every second
-		const scanInterval = setInterval(() => this.scanForNewFile(agentId), 1000);
-		this.dirScanTimers.set(agentId, scanInterval);
-	}
-
-	private scanForNewFile(agentId: number) {
-		const projectDir = this.agentProjectDirs.get(agentId);
-		if (!projectDir) { return; }
-
-		const currentFile = this.watchedFiles.get(agentId);
-
-		// Phase 1: Session-ID lookup (deterministic — no race conditions)
-		const sessionId = this.agentSessionIds.get(agentId);
-		if (sessionId) {
-			if (!currentFile) {
-				// Still looking for initial session file — try deterministic lookup
-				const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
-				try {
-					if (fs.existsSync(expectedFile)) {
-						console.log(`[Arcadia] Agent ${agentId}: found session file ${sessionId}.jsonl`);
-						this.claimFile(agentId, expectedFile);
-					}
-				} catch { /* file may not exist yet */ }
-				// Don't do generic scan while waiting for session file to appear
-				return;
-			}
-			// Already watching session file — check staleness before allowing /clear detection
-			const lastData = this.lastDataTime.get(agentId) || 0;
-			const staleness = Date.now() - lastData;
-			if (staleness <= 3000) {
-				return;  // file is active, no need to scan
-			}
-			// File is stale >3s — fall through to Phase 2 to detect /clear file switch
-		}
-
-		// Phase 2: Generic scanning (for /clear file switches and adopted terminals)
-		let files: string[];
-		try {
-			files = fs.readdirSync(projectDir)
-				.filter(f => f.endsWith('.jsonl'))
-				.map(f => path.join(projectDir, f));
-		} catch { return; }
-
-		const known = this.knownFilesAtLaunch.get(agentId) || new Set();
-		const unclaimed = files.filter(f => !known.has(f) && !this.claimedFiles.has(f));
-		if (unclaimed.length === 0) { return; }
-
-		// Sort by mtime descending (newest first)
-		unclaimed.sort((a, b) => {
-			try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; }
-			catch { return 0; }
-		});
-		const candidate = unclaimed[0];
-
-		if (!currentFile) {
-			// Adopted terminal with no session ID — claim the newest unclaimed file
-			console.log(`[Arcadia] Agent ${agentId}: claiming ${path.basename(candidate)} (adopted, no session ID)`);
-			this.claimFile(agentId, candidate);
-		} else {
-			// /clear file switching — only if current file is stale
-			const lastData = this.lastDataTime.get(agentId) || 0;
-			const staleness = Date.now() - lastData;
-			if (staleness <= 3000) { return; }
-
-			// Check for competing stale agents in the same project dir.
-			// Only the most-recently-active agent gets priority (more likely to have just /clear'd).
-			for (const [otherId, otherDir] of this.agentProjectDirs) {
-				if (otherId === agentId || otherDir !== projectDir) { continue; }
-				if (!this.watchedFiles.has(otherId)) { continue; }
-				const otherLastData = this.lastDataTime.get(otherId) || 0;
-				const otherStaleness = Date.now() - otherLastData;
-				if (otherStaleness > 3000 && otherLastData > lastData) {
-					console.log(`[Arcadia] Agent ${agentId}: skipping switch, agent ${otherId} has priority`);
-					return;
-				}
-			}
-
-			console.log(`[Arcadia] Agent ${agentId}: switching to ${path.basename(candidate)} (stale ${Math.round(staleness / 1000)}s)`);
-			this.switchFile(agentId, candidate);
-		}
-	}
-
-	private claimFile(agentId: number, filePath: string) {
-		this.watchedFiles.set(agentId, filePath);
-		this.claimedFiles.add(filePath);
-		this.fileOffsets.set(agentId, 0);
-		this.lineBuffers.set(agentId, '');
-		this.lastDataTime.set(agentId, Date.now());
-		console.log(`[Arcadia] Agent ${agentId}: watching file ${path.basename(filePath)}`);
-
-		// Primary: fs.watch for instant response
-		try {
-			const watcher = fs.watch(filePath, () => {
-				this.readNewLines(agentId, filePath);
-			});
-			this.fileWatchers.set(agentId, watcher);
-		} catch (e) {
-			console.log(`[Arcadia] fs.watch failed for agent ${agentId}: ${e}`);
-		}
-
-		// Backup: poll every 2s (fs.watch is unreliable on Windows)
-		const interval = setInterval(() => {
-			if (!this.watchedFiles.has(agentId)) { clearInterval(interval); return; }
-			this.readNewLines(agentId, filePath);
-		}, 2000);
-		this.pollingTimers.set(agentId, interval);
-
-		// Initial read
-		this.readNewLines(agentId, filePath);
-
-		// Persist the current file path for recovery after reload
-		this.updatePersistedFile(agentId, filePath);
-	}
-
-	private switchFile(agentId: number, newFilePath: string) {
-		const oldFile = this.watchedFiles.get(agentId);
-
-		// Stop watching old file
-		this.fileWatchers.get(agentId)?.close();
-		this.fileWatchers.delete(agentId);
-		const pt = this.pollingTimers.get(agentId);
-		if (pt) { clearInterval(pt); }
-		this.pollingTimers.delete(agentId);
-
-		// Unclaim old file and mark as known so we don't reclaim it
-		if (oldFile) {
-			this.claimedFiles.delete(oldFile);
-			this.knownFilesAtLaunch.get(agentId)?.add(oldFile);
-		}
-
-		// Clear tool state
-		this.cancelWaitingTimer(agentId);
-		this.activeToolIds.delete(agentId);
-		this.activeToolStatuses.delete(agentId);
-		this.agentWaitingStatus.delete(agentId);
-		this.webviewView?.webview.postMessage({ type: 'agentToolsClear', id: agentId });
-
-		// Claim new file
-		this.claimFile(agentId, newFilePath);
-	}
-
-	private readNewLines(agentId: number, filePath: string) {
-		try {
-			const stat = fs.statSync(filePath);
-			const offset = this.fileOffsets.get(agentId) || 0;
-			if (stat.size <= offset) { return; }
-
-			const buf = Buffer.alloc(stat.size - offset);
-			const fd = fs.openSync(filePath, 'r');
-			fs.readSync(fd, buf, 0, buf.length, offset);
+			const buf = Buffer.alloc(stat.size - agent.fileOffset);
+			const fd = fs.openSync(agent.jsonlFile, 'r');
+			fs.readSync(fd, buf, 0, buf.length, agent.fileOffset);
 			fs.closeSync(fd);
-			this.fileOffsets.set(agentId, stat.size);
-			this.lastDataTime.set(agentId, Date.now());
+			agent.fileOffset = stat.size;
 
-			// Prepend any leftover partial line from the previous read
-			const text = (this.lineBuffers.get(agentId) || '') + buf.toString('utf-8');
+			const text = agent.lineBuffer + buf.toString('utf-8');
 			const lines = text.split('\n');
-			// Last element may be an incomplete line — save it for next read
-			this.lineBuffers.set(agentId, lines.pop() || '');
+			agent.lineBuffer = lines.pop() || '';
 
 			for (const line of lines) {
 				if (!line.trim()) { continue; }
@@ -605,9 +332,11 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private clearAgentActivity(agentId: number) {
-		this.activeToolIds.delete(agentId);
-		this.activeToolStatuses.delete(agentId);
-		this.agentWaitingStatus.delete(agentId);
+		const agent = this.agents.get(agentId);
+		if (!agent) { return; }
+		agent.activeToolIds.clear();
+		agent.activeToolStatuses.clear();
+		agent.isWaiting = false;
 		this.webviewView?.webview.postMessage({ type: 'agentToolsClear', id: agentId });
 		this.webviewView?.webview.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
 	}
@@ -624,7 +353,10 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 		this.cancelWaitingTimer(agentId);
 		const timer = setTimeout(() => {
 			this.waitingTimers.delete(agentId);
-			this.agentWaitingStatus.set(agentId, true);
+			const agent = this.agents.get(agentId);
+			if (agent) {
+				agent.isWaiting = true;
+			}
 			this.webviewView?.webview.postMessage({
 				type: 'agentStatus',
 				id: agentId,
@@ -635,6 +367,8 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private processTranscriptLine(agentId: number, line: string) {
+		const agent = this.agents.get(agentId);
+		if (!agent) { return; }
 		try {
 			const record = JSON.parse(line);
 
@@ -645,21 +379,15 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 				const hasToolUse = blocks.some(b => b.type === 'tool_use');
 
 				if (hasToolUse) {
-					// Agent is actively working — cancel any pending waiting timer
 					this.cancelWaitingTimer(agentId);
-					this.agentWaitingStatus.delete(agentId);
+					agent.isWaiting = false;
 					this.webviewView?.webview.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
 					for (const block of blocks) {
 						if (block.type === 'tool_use' && block.id) {
 							const status = this.formatToolStatus(block.name || '', block.input || {});
 							console.log(`[Arcadia] Agent ${agentId} tool start: ${block.id} ${status}`);
-							let active = this.activeToolIds.get(agentId);
-							if (!active) { active = new Set(); this.activeToolIds.set(agentId, active); }
-							active.add(block.id);
-							// Cache for webview reconnect
-							let cached = this.activeToolStatuses.get(agentId);
-							if (!cached) { cached = new Map(); this.activeToolStatuses.set(agentId, cached); }
-							cached.set(block.id, status);
+							agent.activeToolIds.add(block.id);
+							agent.activeToolStatuses.set(block.id, status);
 							this.webviewView?.webview.postMessage({
 								type: 'agentToolStart',
 								id: agentId,
@@ -669,15 +397,10 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 						}
 					}
 				} else {
-					// Text-only or thinking-only assistant record.
-					// Text-only records are often intermediate (followed by tool_use),
-					// so debounce before declaring "waiting". The system/turn_duration
-					// record will provide an immediate signal if the turn truly ended.
 					const hasText = blocks.some(b => b.type === 'text');
 					if (hasText) {
 						this.startWaitingTimer(agentId, 2000);
 					}
-					// thinking-only records: ignore (no status change)
 				}
 			} else if (record.type === 'user') {
 				const content = record.message?.content;
@@ -688,8 +411,8 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 						for (const block of blocks) {
 							if (block.type === 'tool_result' && block.tool_use_id) {
 								console.log(`[Arcadia] Agent ${agentId} tool done: ${block.tool_use_id}`);
-								this.activeToolIds.get(agentId)?.delete(block.tool_use_id);
-								this.activeToolStatuses.get(agentId)?.delete(block.tool_use_id);
+								agent.activeToolIds.delete(block.tool_use_id);
+								agent.activeToolStatuses.delete(block.tool_use_id);
 								const toolId = block.tool_use_id;
 								setTimeout(() => {
 									this.webviewView?.webview.postMessage({
@@ -701,20 +424,16 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 							}
 						}
 					} else {
-						// Array content but no tool_result → new user prompt
 						this.cancelWaitingTimer(agentId);
 						this.clearAgentActivity(agentId);
 					}
 				} else if (typeof content === 'string' && content.trim()) {
-					// String content → new user prompt (clear tools + waiting status)
 					this.cancelWaitingTimer(agentId);
 					this.clearAgentActivity(agentId);
 				}
 			} else if (record.type === 'system' && record.subtype === 'turn_duration') {
-				// Turn complete — agent is waiting for user input.
-				// This is the reliable signal; cancel any debounce timer and set immediately.
 				this.cancelWaitingTimer(agentId);
-				this.agentWaitingStatus.set(agentId, true);
+				agent.isWaiting = true;
 				this.webviewView?.webview.postMessage({
 					type: 'agentStatus',
 					id: agentId,
@@ -748,54 +467,14 @@ class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	private stopWatching(agentId: number) {
-		// Stop directory scanning
-		const ds = this.dirScanTimers.get(agentId);
-		if (ds) { clearInterval(ds); }
-		this.dirScanTimers.delete(agentId);
-
-		// Stop file watching
-		this.fileWatchers.get(agentId)?.close();
-		this.fileWatchers.delete(agentId);
-		const pt = this.pollingTimers.get(agentId);
-		if (pt) { clearInterval(pt); }
-		this.pollingTimers.delete(agentId);
-
-		// Unclaim file
-		const file = this.watchedFiles.get(agentId);
-		if (file) { this.claimedFiles.delete(file); }
-		this.watchedFiles.delete(agentId);
-
-		// Clean up remaining state
-		this.cancelWaitingTimer(agentId);
-		this.agentProjectDirs.delete(agentId);
-		this.agentSessionIds.delete(agentId);
-		this.knownFilesAtLaunch.delete(agentId);
-		this.lastDataTime.delete(agentId);
-		this.activeToolIds.delete(agentId);
-		this.activeToolStatuses.delete(agentId);
-		this.agentWaitingStatus.delete(agentId);
-		this.fileOffsets.delete(agentId);
-		this.lineBuffers.delete(agentId);
-
-		// Remove persisted state so it's not restored after reload
-		// (but not during dispose — we need state for recovery)
-		if (!this.disposing) {
-			this.removePersistedState(agentId);
-		}
-	}
-
 	dispose() {
-		// Stop watchers but DON'T clear persisted state — it's needed for recovery after reload.
-		// stopWatching() calls removePersistedState(), so we temporarily bypass it.
-		this.disposing = true;
-		for (const id of [...this.agentProjectDirs.keys()]) {
-			this.stopWatching(id);
+		for (const id of [...this.agents.keys()]) {
+			this.removeAgent(id);
 		}
-		this.disposing = false;
+		for (const [terminal] of this.terminalScanTimers) {
+			this.cleanupTerminalScan(terminal);
+		}
 	}
-
-	private disposing = false;
 }
 
 let providerInstance: ArcadiaViewProvider | undefined;
@@ -821,7 +500,6 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
 
 	let html = fs.readFileSync(indexPath, 'utf-8');
 
-	// Rewrite asset paths to use webview URIs
 	html = html.replace(/(href|src)="\.\/([^"]+)"/g, (_match, attr, filePath) => {
 		const fileUri = vscode.Uri.joinPath(distPath, filePath);
 		const webviewUri = webview.asWebviewUri(fileUri);

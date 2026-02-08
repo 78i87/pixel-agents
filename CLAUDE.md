@@ -22,8 +22,9 @@ VS Code extension with an embedded React webview panel.
 - The extension registers a `WebviewViewProvider` for the view `arcadia.panelView`, which lives in the bottom panel (next to Terminal).
 - On resolve, it reads `dist/webview/index.html` and rewrites `./` asset paths to `webview.asWebviewUri()` URIs.
 - The command `arcadia.showPanel` focuses the panel.
-- The webview communicates with the extension via `postMessage`. Clicking "Open Claude Code" sends `openClaude`, the extension creates a named terminal running `claude` and replies with `agentCreated`. Each session gets an "Agent #n" button; clicking it sends `focusAgent` to show that terminal. Each agent button has a close (✕) button that sends `closeAgent` to dispose of the terminal. Closing a terminal (manually or via the close button) sends `agentClosed` to remove its button.
-- On resolve, the extension adopts any existing VS Code terminals whose name matches `Claude Code #N`. It also listens to `onDidOpenTerminal` to detect Claude Code terminals created outside the extension. The webview sends `webviewReady` on mount; the extension responds with `existingAgents` containing all tracked agent IDs.
+- **Session-centric model**: Agents are defined by JSONL sessions, not terminals. One terminal can host multiple agents (e.g., after `/clear`). When `/clear` is run, a new JSONL file is created and a new agent appears alongside the old one. Agent IDs are a running counter that increments on each new session detection.
+- The webview communicates with the extension via `postMessage`. Clicking "Open Claude Code" sends `openClaude`, the extension creates a named terminal running `claude --session-id <uuid>` and waits for the JSONL file to appear before creating an agent. Once the file is found, it replies with `agentCreated`. Each agent gets an "Agent #n" button; clicking it sends `focusAgent` to show the hosting terminal. Each agent button has a close (✕) button that sends `closeAgent` to dispose of the terminal. Closing a terminal (manually or via the close button) sends `agentClosed` to remove its button.
+- On resolve, the extension adopts any existing VS Code terminals whose name matches `Claude Code #N` and scans for their JSONL files. It also listens to `onDidOpenTerminal` to detect Claude Code terminals created outside the extension. The webview sends `webviewReady` on mount; the extension responds with `existingAgents` containing all tracked agent IDs.
 
 ## Build
 
@@ -51,12 +52,13 @@ Real-time display of what each Claude Code agent is doing (e.g., "Reading App.ts
 
 ### How it works
 
-1. **No `--session-id`**: Extension launches `claude` without a session ID. Claude Code generates its own session and creates a JSONL file.
-2. **Transcript JSONL**: Claude Code writes real-time JSONL transcripts to `~/.claude/projects/<project-hash>/<session-id>.jsonl`. The project hash is the workspace path with `:` `\` `/` replaced by `-` (e.g., `C:\Users\Developer\Desktop\Arcadia` → `C--Users-Developer-Desktop-Arcadia`).
-3. **`--session-id` for deterministic file matching**: Extension generates a UUID per agent and passes `claude --session-id <uuid>`. The JSONL file is then `<uuid>.jsonl` — no race conditions with parallel agents. Skipped when `--continue` is used (it resumes the last session's own ID); adopted terminals also fall back to generic scanning.
-4. **File switching (`/clear` support)**: When `/clear` is run, Claude Code creates a new JSONL file. The extension detects this: if the current file has been stale for >3s and a new unclaimed file appears, it switches the agent to the new file. Multi-agent conflict detection gives priority to the most-recently-active stale agent.
-5. **File watching**: Once a file is claimed, extension watches it using hybrid `fs.watch` (instant) + 2s polling (backup). Includes partial line buffering to handle mid-write reads.
-6. **Parsing**: Each JSONL line is a complete record with a top-level `type` field:
+1. **Transcript JSONL**: Claude Code writes real-time JSONL transcripts to `~/.claude/projects/<project-hash>/<session-id>.jsonl`. The project hash is the workspace path with `:` `\` `/` replaced by `-` (e.g., `C:\Users\Developer\Desktop\Arcadia` → `C--Users-Developer-Desktop-Arcadia`).
+2. **`--session-id` for deterministic file matching**: Extension generates a UUID per terminal and passes `claude --session-id <uuid>`. The JSONL file is then `<uuid>.jsonl` — no race conditions with parallel agents. Adopted terminals fall back to generic scanning.
+3. **Two-phase agent creation**: Terminal creation and agent creation are separate. The extension first creates a terminal and starts a continuous 1s scan for JSONL files. Each unclaimed file that passes the max-age filter creates a new agent.
+4. **`/clear` creates a new agent**: When `/clear` is run, Claude Code creates a new JSONL file. The continuous scan picks it up as unclaimed and creates a new agent. The old agent remains visible (its file is still claimed). No stale detection is used.
+5. **Session max age filter**: The setting `arcadia.sessionMaxAgeSecs` (default 180s) filters the generic scan to only claim JSONL files modified within that window. Set to 0 to show all. Files created by the extension's own `--session-id` are always claimed regardless of age.
+6. **File watching**: Once a file is claimed, extension watches it using hybrid `fs.watch` (instant) + 2s polling (backup). Includes partial line buffering to handle mid-write reads.
+7. **Parsing**: Each JSONL line is a complete record with a top-level `type` field:
    - `"assistant"` records contain `message.content[]` with `tool_use` blocks (`id`, `name`, `input`)
    - `"user"` records contain `message.content[]` with `tool_result` blocks, OR `content` as a string (text prompt)
    - `"system"` records with `subtype: "turn_duration"` mark turn completion (reliable signal)
@@ -64,12 +66,16 @@ Real-time display of what each Claude Code agent is doing (e.g., "Reading App.ts
    - `"file-history-snapshot"` records track file state (ignored)
    - `"assistant"` records can also have `content: [{type: "thinking"}]` — reasoning blocks, not text
    - Tool IDs match 1:1 between `tool_use.id` and `tool_result.tool_use_id`
-7. **Messages to webview**:
+8. **Messages to webview**:
+   - `agentCreated { id }` — when a JSONL file is claimed and agent is created
+   - `agentClosed { id }` — when terminal closes
+   - `openSessionsFolder` — opens the JSONL project directory in file explorer
    - `agentToolStart { id, toolId, status }` — when a tool_use block is found
    - `agentToolDone { id, toolId }` — when a matching tool_result block is found (300ms delayed)
    - `agentToolsClear { id }` — when a new user prompt is detected (clears stacked tools)
    - `agentStatus { id, status: 'waiting' | 'active' }` — when agent finishes turn or starts new work
-8. **Webview rendering**: Tools stack vertically below each agent button. Active tools show a blue pulsing dot; completed tools show a green solid dot (dimmed). When agent is waiting for input (no active tools + status='waiting'), shows amber dot with "Waiting for input".
+   - `existingAgents { agents: number[] }` — sent on webview reconnect
+9. **Webview rendering**: Flat list of agent cards (no folders). "Open Claude Code" and "Sessions" buttons at top. Tools stack vertically below each agent button. Active tools show a blue pulsing dot; completed tools show a green solid dot (dimmed). When agent is waiting for input (no active tools + status='waiting'), shows amber dot with "Waiting for input".
 
 ### Key lessons learned
 
@@ -77,46 +83,33 @@ Real-time display of what each Claude Code agent is doing (e.g., "Reading App.ts
 - **`fs.watch` is unreliable on Windows**: Sometimes misses events. Always pair with polling as a backup.
 - **Partial line buffering is essential**: When reading an append-only file, the last line may be incomplete (mid-write). Only process lines terminated by `\n`; carry the remainder to the next read.
 - **Flickering / instant completion**: For fast tools (~1s like Read), `tool_use` and `tool_result` arrive in the same `readNewLines` batch. Without a delay, React batches both state updates into a single render and the user never sees the blue active state. Fixed by delaying `agentToolDone` messages by 300ms.
-- **`--session-id` for multi-agent**: Each agent gets `claude --session-id <uuid>` so the JSONL filename is deterministic (`<uuid>.jsonl`). Eliminates race conditions when parallel agents share the same project directory. Skip for `--continue` (it uses the previous session's ID).
+- **`--session-id` for multi-agent**: Each terminal gets `claude --session-id <uuid>` so the JSONL filename is deterministic (`<uuid>.jsonl`). Eliminates race conditions when parallel agents share the same project directory. Adopted terminals fall back to generic scanning.
 - **User prompts can be string or array**: `record.message.content` is a string for text prompts, an array for tool results. Must handle both forms to properly clear tools/status on new prompts.
 - **`/clear` creates a new JSONL file**: The `/clear` command is recorded in the NEW file's first records, not the old file. The old file simply stops receiving writes.
 - **`--output-format stream-json` requires non-TTY stdin**: Cannot be used with VS Code terminals (Ink TUI requires TTY). Transcript JSONL watching is the alternative.
 - **Text-only assistant records are often intermediate**: In the JSONL, text and tool_use from the same API response are written as separate records. A text-only `assistant` record is frequently followed by a `tool_use` record (not a turn end). The reliable turn-end signal is `system` records with `subtype: "turn_duration"`. Text-only assistant records use a 2s debounce timer as a fallback.
 - **No `summary`/`result` record types exist**: Turn completion is signaled by `system` records with `subtype: "turn_duration"`, not `summary` or `result`.
 
-### Extension state maps (on ArcadiaViewProvider)
+### Extension state
 
+**Consolidated `AgentState` struct** (per agent):
 ```
-agentSessionIds      — agentId → session UUID passed via --session-id
-watchedFiles         — agentId → current JSONL file path
-agentProjectDirs     — agentId → project directory path
-claimedFiles         — Set<string> of all JSONL paths claimed by any agent
-knownFilesAtLaunch   — agentId → Set<string> of pre-existing files (skip list)
-dirScanTimers        — agentId → setInterval handle (1s directory polling)
-lastDataTime         — agentId → Date.now() timestamp of last new data received
+id, terminalRef, projectDir, jsonlFile, fileOffset, lineBuffer,
+activeToolIds, activeToolStatuses, isWaiting
+```
+
+**Provider-level maps**:
+```
+agents               — agentId → AgentState (consolidated agent state)
+claimedFiles         — Set<string> of JSONL paths claimed by any agent
+terminalProjectDirs  — Terminal → project dir path
+terminalScanTimers   — Terminal → setInterval (1s continuous scan for new JSONL files)
 fileWatchers         — agentId → fs.FSWatcher
-pollingTimers        — agentId → setInterval handle (2s backup file polling)
-fileOffsets          — agentId → byte offset into JSONL file
-lineBuffers          — agentId → incomplete line from last read
-activeToolIds        — agentId → Set<toolId> (currently running tools)
-waitingTimers        — agentId → setTimeout handle (2s debounce for "waiting" status)
-activeToolStatuses   — agentId → Map<toolId, status string> (cached for webview reconnect)
-agentWaitingStatus   — agentId → boolean (cached for webview reconnect)
+pollingTimers        — agentId → setInterval (2s backup file polling)
+waitingTimers        — agentId → setTimeout (2s debounce for "waiting" status)
 ```
 
-### Persisted state (`workspaceState`)
-
-Agent session mappings are persisted in `vscode.ExtensionContext.workspaceState` under key `arcadia.agentStates` as `Record<string, PersistedAgentState>`. This allows adopted terminals to reclaim their JSONL files after extension reload.
-
-- **On create**: Session ID, project dir, and folder ID are saved.
-- **On file claim**: `lastFile` is updated to track the most recent JSONL path (handles `/clear` file switches).
-- **On terminal close**: Persisted state is removed.
-- **On extension dispose**: State is intentionally NOT removed (needed for recovery).
-- **On adopt**: Persisted state is read; the agent's own session file and `lastFile` are excluded from `knownFilesAtLaunch` so they can be reclaimed immediately.
-
-### `/clear` file switch for session-ID agents
-
-Session-ID agents now fall through from Phase 1 to Phase 2 (generic scanning) when their current file has been stale for >3s. This allows `/clear` detection for agents that were launched with `--session-id`.
+No persistence (`workspaceState`) is used. No stale detection. Agents are re-detected on extension reload by scanning existing terminals and their JSONL files (filtered by `arcadia.sessionMaxAgeSecs`).
 
 ## Memory
 

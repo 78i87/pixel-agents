@@ -1,33 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void }
 
 const vscode = acquireVsCodeApi()
-
-interface Folder {
-  id: string
-  name: string
-  path: string
-}
-
-interface AgentInfo {
-  id: number
-  folderId: string
-}
-
-interface ContextMenu {
-  agentId: number
-  x: number
-  y: number
-}
-
-interface MoveDialog {
-  agentId: number
-  targetFolder: Folder
-  sourceFolderPath: string
-  keepAccess: boolean
-  continueConversation: boolean
-}
 
 interface ToolActivity {
   toolId: string
@@ -36,79 +11,46 @@ interface ToolActivity {
 }
 
 function App() {
-  const [folders, setFolders] = useState<Folder[]>([])
-  const [agents, setAgents] = useState<AgentInfo[]>([])
+  const [agents, setAgents] = useState<number[]>([])
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null)
-  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
-  const [moveDialog, setMoveDialog] = useState<MoveDialog | null>(null)
   const [agentTools, setAgentTools] = useState<Record<number, ToolActivity[]>>({})
   const [agentStatuses, setAgentStatuses] = useState<Record<number, string>>({})
-
-  // Dismiss context menu on click outside
-  const dismissContextMenu = useCallback(() => {
-    setContextMenu(null)
-  }, [])
-
-  useEffect(() => {
-    if (contextMenu) {
-      window.addEventListener('click', dismissContextMenu)
-      return () => window.removeEventListener('click', dismissContextMenu)
-    }
-  }, [contextMenu, dismissContextMenu])
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       const msg = e.data
       if (msg.type === 'agentCreated') {
-        const newAgent: AgentInfo = { id: msg.id as number, folderId: msg.folderId as string }
-        setAgents((prev) =>
-          prev.some((a) => a.id === newAgent.id) ? prev : [...prev, newAgent]
-        )
-        setSelectedAgent(msg.id as number)
+        const id = msg.id as number
+        setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]))
+        setSelectedAgent(id)
       } else if (msg.type === 'agentClosed') {
-        setAgents((prev) => prev.filter((a) => a.id !== msg.id))
-        setSelectedAgent((prev) => (prev === msg.id ? null : prev))
+        const id = msg.id as number
+        setAgents((prev) => prev.filter((a) => a !== id))
+        setSelectedAgent((prev) => (prev === id ? null : prev))
         setAgentTools((prev) => {
-          if (!(msg.id in prev)) return prev
+          if (!(id in prev)) return prev
           const next = { ...prev }
-          delete next[msg.id as number]
+          delete next[id]
           return next
         })
         setAgentStatuses((prev) => {
-          if (!(msg.id in prev)) return prev
+          if (!(id in prev)) return prev
           const next = { ...prev }
-          delete next[msg.id as number]
+          delete next[id]
           return next
         })
       } else if (msg.type === 'existingAgents') {
-        const incomingFolders = msg.folders as Folder[]
-        const incomingAgents = (msg.agents as { agentId: number; folderId: string }[]).map(
-          (a) => ({ id: a.agentId, folderId: a.folderId })
-        )
-        setFolders(incomingFolders)
+        const incoming = msg.agents as number[]
         setAgents((prev) => {
-          const ids = new Set(prev.map((a) => a.id))
+          const ids = new Set(prev)
           const merged = [...prev]
-          for (const a of incomingAgents) {
-            if (!ids.has(a.id)) {
-              merged.push(a)
+          for (const id of incoming) {
+            if (!ids.has(id)) {
+              merged.push(id)
             }
           }
-          return merged.sort((a, b) => a.id - b.id)
+          return merged.sort((a, b) => a - b)
         })
-      } else if (msg.type === 'folderAdded') {
-        const newFolder: Folder = {
-          id: msg.id as string,
-          name: msg.name as string,
-          path: msg.path as string,
-        }
-        setFolders((prev) => (prev.some((f) => f.id === newFolder.id) ? prev : [...prev, newFolder]))
-      } else if (msg.type === 'agentMoved') {
-        const agentId = msg.agentId as number
-        const targetFolderId = msg.targetFolderId as string
-        setAgents((prev) =>
-          prev.map((a) => (a.id === agentId ? { ...a, folderId: targetFolderId } : a))
-        )
       } else if (msg.type === 'agentToolStart') {
         const id = msg.id as number
         const toolId = msg.toolId as string
@@ -162,61 +104,17 @@ function App() {
   }
 
   const handleOpenClaude = () => {
-    const folder = folders.length > 0 ? folders[0] : null
-    vscode.postMessage({
-      type: 'openClaude',
-      folderId: folder?.id,
-      folderPath: folder?.path,
-    })
+    vscode.postMessage({ type: 'openClaude' })
   }
 
-  const handleAddFolder = () => {
-    vscode.postMessage({ type: 'addFolder' })
-  }
-
-  const handleAgentContextMenu = (e: React.MouseEvent, agentId: number) => {
-    e.preventDefault()
-    if (folders.length <= 1) return // no other folder to move to
-    setContextMenu({ agentId, x: e.clientX, y: e.clientY })
-  }
-
-  const handleMoveAgent = (agentId: number, targetFolder: Folder) => {
-    const agent = agents.find((a) => a.id === agentId)
-    const sourceFolder = agent ? folders.find((f) => f.id === agent.folderId) : null
-    setMoveDialog({
-      agentId,
-      targetFolder,
-      sourceFolderPath: sourceFolder?.path || '',
-      keepAccess: false,
-      continueConversation: true,
-    })
-    setContextMenu(null)
-  }
-
-  const handleConfirmMove = () => {
-    if (!moveDialog) return
-    vscode.postMessage({
-      type: 'moveAgent',
-      agentId: moveDialog.agentId,
-      targetFolderId: moveDialog.targetFolder.id,
-      targetPath: moveDialog.targetFolder.path,
-      keepAccess: moveDialog.keepAccess,
-      sourcePath: moveDialog.sourceFolderPath,
-      continueConversation: moveDialog.continueConversation,
-    })
-    setMoveDialog(null)
-  }
-
-  const agentsByFolder = (folderId: string) => agents.filter((a) => a.folderId === folderId)
-
-  const renderAgentCard = (agent: AgentInfo) => {
-    const isSelected = selectedAgent === agent.id
-    const tools = agentTools[agent.id] || []
-    const status = agentStatuses[agent.id]
+  const renderAgentCard = (id: number) => {
+    const isSelected = selectedAgent === id
+    const tools = agentTools[id] || []
+    const status = agentStatuses[id]
     const hasActiveTools = tools.some((t) => !t.done)
     return (
       <div
-        key={agent.id}
+        key={id}
         style={{
           border: `1px solid ${isSelected ? 'var(--vscode-focusBorder, #007fd4)' : 'var(--vscode-widget-border, transparent)'}`,
           borderRadius: 4,
@@ -226,8 +124,7 @@ function App() {
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 0 }}>
           <button
-            onClick={() => handleSelectAgent(agent.id)}
-            onContextMenu={(e) => handleAgentContextMenu(e, agent.id)}
+            onClick={() => handleSelectAgent(id)}
             style={{
               borderRadius: '3px 0 0 3px',
               padding: '6px 10px',
@@ -237,10 +134,10 @@ function App() {
               fontWeight: isSelected ? 'bold' : undefined,
             }}
           >
-            Agent #{agent.id}
+            Agent #{id}
           </button>
           <button
-            onClick={() => vscode.postMessage({ type: 'closeAgent', id: agent.id })}
+            onClick={() => vscode.postMessage({ type: 'closeAgent', id })}
             style={{
               borderRadius: '0 3px 3px 0',
               padding: '6px 8px',
@@ -312,11 +209,6 @@ function App() {
     )
   }
 
-  const currentAgent = contextMenu ? agents.find((a) => a.id === contextMenu.agentId) : null
-  const moveTargets = currentAgent
-    ? folders.filter((f) => f.id !== currentAgent.folderId)
-    : []
-
   return (
     <div style={{ padding: 12, fontSize: '14px' }}>
       <style>{`
@@ -327,172 +219,20 @@ function App() {
         .arcadia-pulse { animation: arcadia-pulse 1.5s ease-in-out infinite; }
       `}</style>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button onClick={handleAddFolder} style={{ padding: '8px 14px', fontSize: '14px' }}>+ Add Folder</button>
-        <button onClick={handleOpenClaude} style={{ padding: '8px 14px', fontSize: '14px' }}>Open Claude Code</button>
+        <button onClick={handleOpenClaude} style={{ padding: '8px 14px', fontSize: '14px' }}>
+          Open Claude Code
+        </button>
+        <button
+          onClick={() => vscode.postMessage({ type: 'openSessionsFolder' })}
+          style={{ padding: '8px 14px', fontSize: '14px' }}
+          title="Open JSONL sessions folder in file explorer"
+        >
+          Sessions
+        </button>
       </div>
-
-      {folders.map((folder) => {
-        const folderAgents = agentsByFolder(folder.id)
-        return (
-          <div key={folder.id} style={{ marginBottom: 10 }}>
-            <div
-              style={{
-                fontSize: '13px',
-                opacity: 0.8,
-                marginBottom: 6,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-              title={folder.path}
-            >
-              📁 {folder.name}{' '}
-              <span style={{ opacity: 0.6, fontSize: '0.9em' }}>({folder.path})</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 8 }}>
-              {folderAgents.length === 0 && (
-                <span style={{ opacity: 0.5, fontSize: '13px' }}>No agents</span>
-              )}
-              {folderAgents.map(renderAgentCard)}
-            </div>
-          </div>
-        )
-      })}
-
-      {contextMenu && moveTargets.length > 0 && (
-        <div
-          style={{
-            position: 'fixed',
-            left: contextMenu.x,
-            top: contextMenu.y,
-            background: 'var(--vscode-menu-background, var(--vscode-editor-background))',
-            border: '1px solid var(--vscode-menu-border, var(--vscode-widget-border))',
-            borderRadius: 4,
-            padding: '4px 0',
-            zIndex: 1000,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-            minWidth: 180,
-          }}
-        >
-          <div
-            style={{
-              padding: '6px 14px',
-              fontSize: '13px',
-              opacity: 0.6,
-            }}
-          >
-            Move to…
-          </div>
-          {moveTargets.map((folder) => (
-            <div
-              key={folder.id}
-              onClick={() => handleMoveAgent(contextMenu.agentId, folder)}
-              style={{
-                padding: '8px 14px',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background =
-                  'var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground))'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-              }}
-            >
-              📁 {folder.name}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {moveDialog && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(0,0,0,0.4)',
-            zIndex: 2000,
-          }}
-          onClick={() => setMoveDialog(null)}
-        >
-          <div
-            style={{
-              background: 'var(--vscode-editor-background)',
-              border: '1px solid var(--vscode-widget-border)',
-              borderRadius: 6,
-              padding: 16,
-              minWidth: 280,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontWeight: 'bold', marginBottom: 14, fontSize: '15px' }}>
-              Move Agent #{moveDialog.agentId} to {moveDialog.targetFolder.name}
-            </div>
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: 16,
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
-              <input
-                type="checkbox"
-                style={{ width: 16, height: 16 }}
-                checked={moveDialog.continueConversation}
-                onChange={(e) =>
-                  setMoveDialog({ ...moveDialog, continueConversation: e.target.checked })
-                }
-              />
-              Continue the conversation
-            </label>
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: 10,
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
-              <input
-                type="checkbox"
-                style={{ width: 16, height: 16 }}
-                checked={moveDialog.keepAccess}
-                onChange={(e) =>
-                  setMoveDialog({ ...moveDialog, keepAccess: e.target.checked })
-                }
-              />
-              Keep access to previous directory
-            </label>
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
-              <button onClick={() => setMoveDialog(null)} style={{ padding: '8px 14px', fontSize: '14px' }}>Cancel</button>
-              <button
-                onClick={handleConfirmMove}
-                style={{
-                  padding: '8px 14px',
-                  fontSize: '14px',
-                  background: 'var(--vscode-button-background)',
-                  color: 'var(--vscode-button-foreground)',
-                }}
-              >
-                Move
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {agents.map(renderAgentCard)}
+      </div>
     </div>
   )
 }
