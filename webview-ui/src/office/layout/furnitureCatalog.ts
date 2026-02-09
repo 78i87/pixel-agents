@@ -1,5 +1,5 @@
 import { FurnitureType } from '../types.js'
-import type { FurnitureCatalogEntry } from '../types.js'
+import type { FurnitureCatalogEntry, SpriteData } from '../types.js'
 import {
   DESK_SQUARE_SPRITE,
   BOOKSHELF_SPRITE,
@@ -18,6 +18,20 @@ import {
   TS_PAINTING_LARGE_1, TS_PAINTING_LARGE_2,
   TS_PAINTING_SMALL_1, TS_PAINTING_SMALL_2, TS_PAINTING_SMALL_3,
 } from '../sprites/tilesetSprites.js'
+
+export interface LoadedAssetData {
+  catalog: Array<{
+    id: string
+    label: string
+    category: string
+    width: number
+    height: number
+    footprintW: number
+    footprintH: number
+    isDesk: boolean
+  }>
+  sprites: Record<string, SpriteData>
+}
 
 export type FurnitureCategory = 'desks' | 'chairs' | 'storage' | 'decor' | 'electronics' | 'misc'
 
@@ -58,12 +72,68 @@ export const FURNITURE_CATALOG: CatalogEntryWithCategory[] = [
   { type: FurnitureType.PAINTING_SMALL_3, label: 'Painting Small 3', footprintW: 1, footprintH: 1, sprite: TS_PAINTING_SMALL_3, isDesk: false, category: 'decor' },
 ]
 
-export function getCatalogEntry(type: FurnitureType): CatalogEntryWithCategory | undefined {
-  return FURNITURE_CATALOG.find((e) => e.type === type)
+// Dynamic catalog built from loaded assets (when available)
+let dynamicCatalog: CatalogEntryWithCategory[] | null = null
+let dynamicCategories: FurnitureCategory[] | null = null
+
+/**
+ * Build catalog from loaded assets. Returns true if successful.
+ * Once built, all getCatalog* functions use the dynamic catalog.
+ * Uses ONLY custom assets (excludes hardcoded furniture when assets are loaded).
+ */
+export function buildDynamicCatalog(assets: LoadedAssetData): boolean {
+  if (!assets?.catalog || !assets?.sprites) return false
+
+  const entries: CatalogEntryWithCategory[] = []
+
+  // Add new exported assets (no hardcoded furniture when custom assets are present)
+  const newAssets = assets.catalog.map((asset) => {
+    const sprite = assets.sprites[asset.id]
+    if (!sprite) {
+      console.warn(`No sprite data for asset ${asset.id}`)
+      return null
+    }
+    return {
+      type: asset.id,
+      label: asset.label,
+      footprintW: asset.footprintW,
+      footprintH: asset.footprintH,
+      sprite,
+      isDesk: asset.isDesk,
+      category: asset.category as FurnitureCategory,
+    }
+  }).filter((e): e is CatalogEntryWithCategory => e !== null)
+
+  entries.push(...newAssets)
+
+  if (newAssets.length === 0) return false
+
+  dynamicCatalog = entries
+  dynamicCategories = Array.from(new Set(entries.map((e) => e.category)))
+    .filter((c): c is FurnitureCategory => !!c)
+    .sort()
+
+  console.log(`✓ Built dynamic catalog with ${newAssets.length} custom assets (hardcoded furniture disabled)`)
+  return true
+}
+
+export function getCatalogEntry(type: string): CatalogEntryWithCategory | undefined {
+  const catalog = dynamicCatalog || FURNITURE_CATALOG
+  return catalog.find((e) => e.type === type)
 }
 
 export function getCatalogByCategory(category: FurnitureCategory): CatalogEntryWithCategory[] {
-  return FURNITURE_CATALOG.filter((e) => e.category === category)
+  const catalog = dynamicCatalog || FURNITURE_CATALOG
+  return catalog.filter((e) => e.category === category)
+}
+
+export function getActiveCatalog(): CatalogEntryWithCategory[] {
+  return dynamicCatalog || FURNITURE_CATALOG
+}
+
+export function getActiveCategories(): Array<{ id: FurnitureCategory; label: string }> {
+  const categories = dynamicCategories || (FURNITURE_CATEGORIES.map((c) => c.id) as FurnitureCategory[])
+  return FURNITURE_CATEGORIES.filter((c) => categories.includes(c.id))
 }
 
 export const FURNITURE_CATEGORIES: Array<{ id: FurnitureCategory; label: string }> = [

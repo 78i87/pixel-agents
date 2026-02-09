@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { EditTool, TileType, FurnitureType } from '../types.js'
+import { useState, useEffect } from 'react'
+import { EditTool, TileType } from '../types.js'
 import type { TileType as TileTypeVal } from '../types.js'
-import { FURNITURE_CATEGORIES, getCatalogByCategory } from '../layout/furnitureCatalog.js'
-import type { FurnitureCategory } from '../layout/furnitureCatalog.js'
+import { getCatalogByCategory, buildDynamicCatalog, getActiveCategories } from '../layout/furnitureCatalog.js'
+import type { FurnitureCategory, LoadedAssetData } from '../layout/furnitureCatalog.js'
 import { getCachedSprite } from '../sprites/spriteCache.js'
 
 const TILE_OPTIONS: Array<{ type: TileTypeVal; label: string; color: string }> = [
@@ -50,14 +50,15 @@ const activeTabStyle: React.CSSProperties = {
 interface EditorToolbarProps {
   activeTool: EditTool
   selectedTileType: TileTypeVal
-  selectedFurnitureType: FurnitureType
+  selectedFurnitureType: string
   selectedFurnitureUid: string | null
   onToolChange: (tool: EditTool) => void
   onTileTypeChange: (type: TileTypeVal) => void
-  onFurnitureTypeChange: (type: FurnitureType) => void
+  onFurnitureTypeChange: (type: string) => void
   onDeleteSelected: () => void
   onUndo: () => void
   onReset: () => void
+  loadedAssets?: LoadedAssetData
 }
 
 export function EditorToolbar({
@@ -71,8 +72,32 @@ export function EditorToolbar({
   onDeleteSelected,
   onUndo,
   onReset,
+  loadedAssets,
 }: EditorToolbarProps) {
   const [activeCategory, setActiveCategory] = useState<FurnitureCategory>('desks')
+
+  // Build dynamic catalog from loaded assets
+  useEffect(() => {
+    if (loadedAssets) {
+      try {
+        console.log(`[EditorToolbar] Building dynamic catalog with ${loadedAssets.catalog.length} assets...`)
+        const success = buildDynamicCatalog(loadedAssets)
+        console.log(`[EditorToolbar] Catalog build result: ${success}`)
+
+        // Reset to first available category if current doesn't exist
+        const activeCategories = getActiveCategories()
+        if (activeCategories.length > 0) {
+          const firstCat = activeCategories[0]?.id
+          if (firstCat) {
+            console.log(`[EditorToolbar] Setting active category to: ${firstCat}`)
+            setActiveCategory(firstCat)
+          }
+        }
+      } catch (err) {
+        console.error(`[EditorToolbar] ❌ Error building dynamic catalog:`, err)
+      }
+    }
+  }, [loadedAssets])
 
   const categoryItems = getCatalogByCategory(activeCategory)
 
@@ -158,7 +183,7 @@ export function EditorToolbar({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {/* Category tabs */}
           <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            {FURNITURE_CATEGORIES.map((cat) => (
+            {getActiveCategories().map((cat) => (
               <button
                 key={cat.id}
                 style={activeCategory === cat.id ? activeTabStyle : tabStyle}

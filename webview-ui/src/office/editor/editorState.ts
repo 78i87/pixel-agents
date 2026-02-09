@@ -1,11 +1,11 @@
-import { EditTool, TileType, FurnitureType } from '../types.js'
+import { EditTool, TileType } from '../types.js'
 import type { TileType as TileTypeVal, OfficeLayout } from '../types.js'
 
 export class EditorState {
   isEditMode = false
   activeTool: EditTool = EditTool.SELECT
   selectedTileType: TileTypeVal = TileType.TILE_FLOOR
-  selectedFurnitureType: FurnitureType = FurnitureType.DESK
+  selectedFurnitureType: string = 'desk' // FurnitureType.DESK or asset ID
 
   // Ghost preview position
   ghostCol = -1

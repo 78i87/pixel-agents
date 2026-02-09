@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import type { AgentState } from './types.js';
 import {
@@ -11,6 +12,7 @@ import {
 	getProjectDirPath,
 } from './agentManager.js';
 import { ensureProjectScan } from './fileWatcher.js';
+import { loadFurnitureAssets, sendAssetsToWebview } from './assetLoader.js';
 
 export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 	nextAgentId = { current: 1 };
@@ -85,6 +87,9 @@ export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 				);
 				// Ensure project scan runs even with no restored agents (to adopt external terminals)
 				const projectDir = getProjectDirPath();
+				const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				console.log('[Extension] workspaceRoot:', workspaceRoot);
+				console.log('[Extension] projectDir:', projectDir);
 				if (projectDir) {
 					ensureProjectScan(
 						projectDir, this.knownJsonlFiles, this.projectScanTimer, this.activeAgentId,
@@ -92,9 +97,60 @@ export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
 						this.webview, this.persistAgents,
 					);
+
+					// Load furniture assets BEFORE sending layout
+					(async () => {
+						try {
+							console.log('[Extension] Loading furniture assets...');
+							const extensionPath = this.extensionUri.fsPath;
+							console.log('[Extension] extensionPath:', extensionPath);
+
+							// Check bundled location first: extensionPath/dist/assets/
+							let assetsRoot: string | null = null;
+							const bundledCatalogPath = path.join(extensionPath, 'dist', 'assets', 'furniture', 'furniture-catalog.json');
+							if (fs.existsSync(bundledCatalogPath)) {
+								console.log('[Extension] Found bundled assets at dist/');
+								assetsRoot = path.join(extensionPath, 'dist');
+							} else if (workspaceRoot) {
+								// Fall back to workspace root (development or external assets)
+								console.log('[Extension] Trying workspace for assets...');
+								assetsRoot = workspaceRoot;
+							}
+
+							if (!assetsRoot) {
+								console.log('[Extension] ⚠️  No assets directory found');
+								return;
+							}
+
+							console.log('[Extension] Using assetsRoot:', assetsRoot);
+							const assets = await loadFurnitureAssets(assetsRoot);
+							if (assets && this.webview) {
+								console.log('[Extension] ✅ Assets loaded, sending to webview');
+								sendAssetsToWebview(this.webview, assets);
+								// Send empty layout when assets load (webview will clear furniture)
+								console.log('[Extension] Sending empty layout for new assets');
+								this.webview.postMessage({
+									type: 'layoutLoaded',
+									layout: null, // null will trigger default layout creation in webview
+								});
+								return;
+							} else {
+								console.log('[Extension] ⚠️  No assets returned from loader');
+							}
+						} catch (err) {
+							console.error('[Extension] ❌ Error loading assets:', err);
+						}
+						// Only send saved layout if assets didn't load
+						if (this.webview) {
+							console.log('[Extension] Sending saved layout');
+							sendLayout(this.context, this.webview);
+						}
+					})();
+				} else {
+					// No project dir - send saved layout immediately
+					sendLayout(this.context, this.webview);
 				}
 				sendExistingAgents(this.agents, this.context, this.webview);
-				sendLayout(this.context, this.webview);
 			} else if (message.type === 'openSessionsFolder') {
 				const projectDir = getProjectDirPath();
 				if (projectDir && fs.existsSync(projectDir)) {

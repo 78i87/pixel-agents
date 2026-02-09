@@ -1,0 +1,174 @@
+/**
+ * Asset Loader - Loads furniture assets from disk at startup
+ *
+ * Reads assets/furniture/furniture-catalog.json and loads all PNG files
+ * into SpriteData format for use in the webview.
+ */
+
+import * as fs from 'fs'
+import * as path from 'path'
+import * as vscode from 'vscode'
+import { PNG } from 'pngjs'
+
+export interface FurnitureAsset {
+  id: string
+  name: string
+  label: string
+  category: string
+  file: string
+  width: number
+  height: number
+  footprintW: number
+  footprintH: number
+  isDesk: boolean
+  colorEditable: boolean
+  partOfGroup?: boolean
+  groupId?: string
+  canPlaceOnSurfaces?: boolean
+}
+
+export interface LoadedAssets {
+  catalog: FurnitureAsset[]
+  sprites: Map<string, string[][]> // assetId -> SpriteData
+}
+
+/**
+ * Load furniture assets from disk
+ */
+export async function loadFurnitureAssets(
+  workspaceRoot: string,
+): Promise<LoadedAssets | null> {
+  try {
+    console.log(`[AssetLoader] workspaceRoot received: "${workspaceRoot}"`)
+    const catalogPath = path.join(workspaceRoot, 'assets', 'furniture', 'furniture-catalog.json')
+    console.log(`[AssetLoader] Attempting to load from: ${catalogPath}`)
+
+    if (!fs.existsSync(catalogPath)) {
+      console.log('ℹ️  No furniture catalog found at:', catalogPath)
+      return null
+    }
+
+    console.log('📦 Loading furniture assets from:', catalogPath)
+
+    const catalogContent = fs.readFileSync(catalogPath, 'utf-8')
+    const catalogData = JSON.parse(catalogContent)
+    const catalog: FurnitureAsset[] = catalogData.assets || []
+
+    const sprites = new Map<string, string[][]>()
+
+    for (const asset of catalog) {
+      try {
+        // Ensure file path includes 'assets/' prefix if not already present
+        let filePath = asset.file
+        if (!filePath.startsWith('assets/')) {
+          filePath = `assets/${filePath}`
+        }
+        const assetPath = path.join(workspaceRoot, filePath)
+
+        if (!fs.existsSync(assetPath)) {
+          console.warn(`  ⚠️  Asset file not found: ${asset.file}`)
+          continue
+        }
+
+        // Read PNG and convert to SpriteData
+        const pngBuffer = fs.readFileSync(assetPath)
+        const spriteData = pngToSpriteData(pngBuffer, asset.width, asset.height)
+
+        sprites.set(asset.id, spriteData)
+      } catch (err) {
+        console.warn(`  ⚠️  Error loading ${asset.id}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
+    console.log(`  ✓ Loaded ${sprites.size} / ${catalog.length} assets`)
+    console.log(`[AssetLoader] ✅ Successfully loaded ${sprites.size} furniture sprites`)
+
+    return { catalog, sprites }
+  } catch (err) {
+    console.error(`[AssetLoader] ❌ Error loading furniture assets: ${err instanceof Error ? err.message : err}`)
+    return null
+  }
+}
+
+/**
+ * Convert PNG buffer to SpriteData (2D array of hex color strings)
+ *
+ * PNG format: RGBA
+ * SpriteData format: string[][] where '' = transparent, '#RRGGBB' = opaque color
+ */
+function pngToSpriteData(pngBuffer: Buffer, width: number, height: number): string[][] {
+  try {
+    // Parse PNG using pngjs
+    const png = PNG.sync.read(pngBuffer)
+
+    if (png.width !== width || png.height !== height) {
+      console.warn(
+        `PNG dimensions mismatch: expected ${width}×${height}, got ${png.width}×${png.height}`,
+      )
+    }
+
+    const sprite: string[][] = []
+    const data = png.data // Uint8Array with RGBA values
+
+    for (let y = 0; y < height; y++) {
+      const row: string[] = []
+      for (let x = 0; x < width; x++) {
+        const pixelIndex = (y * png.width + x) * 4
+
+        const r = data[pixelIndex]
+        const g = data[pixelIndex + 1]
+        const b = data[pixelIndex + 2]
+        const a = data[pixelIndex + 3]
+
+        // If alpha is near zero, treat as transparent
+        if (a < 128) {
+          row.push('')
+        } else {
+          // Convert RGB to hex color string
+          const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`.toUpperCase()
+          row.push(hex)
+        }
+      }
+      sprite.push(row)
+    }
+
+    return sprite
+  } catch (err) {
+    console.warn(`Failed to parse PNG: ${err instanceof Error ? err.message : err}`)
+    // Return transparent placeholder
+    const sprite: string[][] = []
+    for (let y = 0; y < height; y++) {
+      sprite.push(new Array(width).fill(''))
+    }
+    return sprite
+  }
+}
+
+/**
+ * Send loaded assets to webview
+ */
+export function sendAssetsToWebview(
+  webview: vscode.Webview,
+  assets: LoadedAssets,
+): void {
+  if (!assets) {
+    console.log('[AssetLoader] ⚠️  No assets to send')
+    return
+  }
+
+  console.log('[AssetLoader] Converting sprites Map to object...')
+  // Convert sprites Map to plain object for JSON serialization
+  const spritesObj: Record<string, string[][]> = {}
+  for (const [id, spriteData] of assets.sprites) {
+    spritesObj[id] = spriteData
+  }
+
+  console.log(`[AssetLoader] Posting furnitureAssetsLoaded message with ${assets.catalog.length} assets`)
+  webview.postMessage({
+    type: 'furnitureAssetsLoaded',
+    catalog: assets.catalog,
+    sprites: spritesObj,
+  })
+
+  console.log(`📤 Sent ${assets.catalog.length} furniture assets to webview`)
+}

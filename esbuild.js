@@ -1,7 +1,30 @@
 const esbuild = require("esbuild");
+const fs = require("fs");
+const path = require("path");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+
+/**
+ * Copy assets folder to dist/assets
+ */
+function copyAssets() {
+	const srcDir = path.join(__dirname, 'webview-ui', 'public', 'assets');
+	const dstDir = path.join(__dirname, 'dist', 'assets');
+
+	if (fs.existsSync(srcDir)) {
+		// Remove existing dist/assets if present
+		if (fs.existsSync(dstDir)) {
+			fs.rmSync(dstDir, { recursive: true });
+		}
+
+		// Copy recursively
+		fs.cpSync(srcDir, dstDir, { recursive: true });
+		console.log('✓ Copied assets/ → dist/assets/');
+	} else {
+		console.log('ℹ️  assets/ folder not found (optional)');
+	}
+}
 
 /**
  * @type {import('esbuild').Plugin}
@@ -47,6 +70,8 @@ async function main() {
 	} else {
 		await ctx.rebuild();
 		await ctx.dispose();
+		// Copy assets after build
+		copyAssets();
 	}
 }
 

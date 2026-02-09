@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { OfficeState } from '../office/engine/officeState.js'
 import type { OfficeLayout, ToolActivity } from '../office/types.js'
 import { extractToolName } from '../office/toolUtils.js'
+import { createDefaultLayout } from '../office/layout/layoutSerializer.js'
 import { vscode } from '../vscodeApi.js'
 
 export interface SubagentCharacter {
@@ -9,6 +10,23 @@ export interface SubagentCharacter {
   parentAgentId: number
   parentToolId: string
   label: string
+}
+
+export interface FurnitureAsset {
+  id: string
+  name: string
+  label: string
+  category: string
+  file: string
+  width: number
+  height: number
+  footprintW: number
+  footprintH: number
+  isDesk: boolean
+  colorEditable: boolean
+  partOfGroup?: boolean
+  groupId?: string
+  canPlaceOnSurfaces?: boolean
 }
 
 export interface ExtensionMessageState {
@@ -19,6 +37,7 @@ export interface ExtensionMessageState {
   subagentTools: Record<number, Record<string, ToolActivity[]>>
   subagentCharacters: SubagentCharacter[]
   layoutReady: boolean
+  loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> }
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -38,6 +57,7 @@ export function useExtensionMessages(getOfficeState: () => OfficeState): Extensi
   const [subagentTools, setSubagentTools] = useState<Record<number, Record<string, ToolActivity[]>>>({})
   const [subagentCharacters, setSubagentCharacters] = useState<SubagentCharacter[]>([])
   const [layoutReady, setLayoutReady] = useState(false)
+  const [loadedAssets, setLoadedAssets] = useState<{ catalog: FurnitureAsset[]; sprites: Record<string, string[][]> } | undefined>()
 
   useEffect(() => {
     // Buffer agents from existingAgents until layout is loaded
@@ -256,6 +276,26 @@ export function useExtensionMessages(getOfficeState: () => OfficeState): Extensi
         // Remove sub-agent character
         os.removeSubagent(id, parentToolId)
         setSubagentCharacters((prev) => prev.filter((s) => !(s.parentAgentId === id && s.parentToolId === parentToolId)))
+      } else if (msg.type === 'furnitureAssetsLoaded') {
+        try {
+          const catalog = msg.catalog as FurnitureAsset[]
+          const sprites = msg.sprites as Record<string, string[][]>
+          console.log(`📦 Webview: Loaded ${catalog.length} furniture assets`)
+          setLoadedAssets({ catalog, sprites })
+          console.log(`📦 Webview: Assets set in state, building dynamic catalog...`)
+
+          // Start fresh: keep room structure, clear all furniture
+          const defaultLayout = createDefaultLayout()
+          const emptyLayout: OfficeLayout = {
+            ...defaultLayout,
+            furniture: [], // Remove all default furniture
+          }
+          console.log(`📦 Webview: Created empty layout, rebuilding office state...`)
+          os.rebuildFromLayout(emptyLayout)
+          console.log(`📦 Webview: Office state rebuilt with empty furniture`)
+        } catch (err) {
+          console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err)
+        }
       }
     }
     window.addEventListener('message', handler)
@@ -263,5 +303,5 @@ export function useExtensionMessages(getOfficeState: () => OfficeState): Extensi
     return () => window.removeEventListener('message', handler)
   }, [getOfficeState])
 
-  return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady }
+  return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets }
 }

@@ -1,5 +1,5 @@
 import { MAP_COLS, MAP_ROWS } from '../types.js'
-import type { TileType as TileTypeVal, OfficeLayout, PlacedFurniture, FurnitureType } from '../types.js'
+import type { TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
 import { getCatalogEntry } from '../layout/furnitureCatalog.js'
 
 /** Paint a single tile. Returns new layout (immutable). */
@@ -39,7 +39,7 @@ export function moveFurniture(layout: OfficeLayout, uid: string, newCol: number,
 /** Check if furniture can be placed at (col, row) without overlapping. */
 export function canPlaceFurniture(
   layout: OfficeLayout,
-  type: FurnitureType,
+  type: string, // FurnitureType enum or asset ID
   col: number,
   row: number,
   excludeUid?: string,

@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import type { OfficeState } from '../office/engine/officeState.js'
 import type { EditorState } from '../office/editor/editorState.js'
 import { EditTool } from '../office/types.js'
-import type { OfficeLayout, FurnitureType, EditTool as EditToolType, TileType as TileTypeVal } from '../office/types.js'
+import type { OfficeLayout, EditTool as EditToolType, TileType as TileTypeVal } from '../office/types.js'
 import { createDefaultLayout } from '../office/layout/layoutSerializer.js'
 import { paintTile, placeFurniture, removeFurniture, canPlaceFurniture } from '../office/editor/editorActions.js'
 import { getCatalogEntry } from '../office/layout/furnitureCatalog.js'
@@ -19,7 +19,7 @@ export interface EditorActions {
   handleToggleEditMode: () => void
   handleToolChange: (tool: EditToolType) => void
   handleTileTypeChange: (type: TileTypeVal) => void
-  handleFurnitureTypeChange: (type: FurnitureType) => void
+  handleFurnitureTypeChange: (type: string) => void // FurnitureType enum or asset ID
   handleDeleteSelected: () => void
   handleUndo: () => void
   handleReset: () => void
@@ -82,7 +82,7 @@ export function useEditorActions(
     setEditorTick((n) => n + 1)
   }, [editorState])
 
-  const handleFurnitureTypeChange = useCallback((type: FurnitureType) => {
+  const handleFurnitureTypeChange = useCallback((type: string) => {
     editorState.selectedFurnitureType = type
     setEditorTick((n) => n + 1)
   }, [editorState])

@@ -98,17 +98,18 @@ export const EditTool = {
 export type EditTool = (typeof EditTool)[keyof typeof EditTool]
 
 export interface FurnitureCatalogEntry {
-  type: FurnitureType
+  type: string // FurnitureType enum or asset ID
   label: string
   footprintW: number
   footprintH: number
   sprite: SpriteData
   isDesk: boolean
+  category?: string
 }
 
 export interface PlacedFurniture {
   uid: string
-  type: FurnitureType
+  type: string // FurnitureType enum or asset ID
   col: number
   row: number
 }
