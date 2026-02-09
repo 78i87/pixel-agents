@@ -9,7 +9,7 @@ VS Code extension with an embedded React webview panel.
 │   ├── extension.ts          — Entry point: activate(), deactivate()
 │   ├── ArcadiaViewProvider.ts — WebviewViewProvider class, message dispatch, dispose
 │   ├── agentManager.ts       — Terminal lifecycle: launch, remove, restore, persist, send
-│   ├── fileWatcher.ts        — File I/O: fs.watch, polling, readNewLines, /clear detection
+│   ├── fileWatcher.ts        — File I/O: fs.watch, polling, readNewLines, /clear detection, terminal adoption
 │   ├── transcriptParser.ts   — JSONL parsing: tool_use/tool_result → webview messages
 │   ├── timerManager.ts       — Waiting/permission timer logic (debounce, detection)
 │   └── types.ts              — Shared interfaces (AgentState, PersistedAgent)
@@ -48,7 +48,8 @@ VS Code extension with an embedded React webview panel.
 - The extension registers a `WebviewViewProvider` for the view `arcadia.panelView`, which lives in the bottom panel (next to Terminal).
 - On resolve, it reads `dist/webview/index.html` and rewrites `./` asset paths to `webview.asWebviewUri()` URIs.
 - The command `arcadia.showPanel` focuses the panel.
-- **One-agent-per-terminal model**: Each "Open Claude Code" click creates a terminal and immediately creates an agent bound to it. The agent button appears right away (before the JSONL file exists). A background 1s poll waits for the specific `<uuid>.jsonl` file, then starts file watching. No adopted terminals.
+- **One-agent-per-terminal model**: Each "Open Claude Code" click creates a terminal and immediately creates an agent bound to it. The agent button appears right away (before the JSONL file exists). A background 1s poll waits for the specific `<uuid>.jsonl` file, then starts file watching.
+- **Terminal adoption**: When a new JSONL file appears and no agent is focused, the extension checks the currently active terminal. If that terminal has no agent, a new agent is created and bound to it. This allows externally-opened Claude Code sessions (e.g., `claude` typed in a manual terminal) to be automatically adopted into the office scene.
 - **`/clear` detection**: The extension tracks all known JSONL files in the project directory. When a new unknown file appears, it is assigned to the currently-active agent (the one whose terminal is focused). This works because `/clear` is typed in the focused terminal, and the new JSONL file it creates is the only "unknown" file. The agent's file watching is swapped to the new file and activity is cleared.
 - **Terminal ↔ agent selection sync**: `onDidChangeActiveTerminal` tracks which agent is active and sends `agentSelected` to the webview so the UI highlights the matching agent when the user switches terminal tabs.
 - The webview communicates with the extension via `postMessage`. Clicking "Open Claude Code" sends `openClaude`, the extension creates a named terminal running `claude --session-id <uuid>` and immediately sends `agentCreated`. Each agent gets an "Agent #n" button; clicking it sends `focusAgent` to show the hosting terminal. Each agent button has a close (✕) button that sends `closeAgent` to dispose of the terminal. Closing a terminal (manually or via the close button) sends `agentClosed` to remove its button.
@@ -83,7 +84,7 @@ Real-time display of what each Claude Code agent is doing (e.g., "Reading App.ts
 1. **Transcript JSONL**: Claude Code writes real-time JSONL transcripts to `~/.claude/projects/<project-hash>/<session-id>.jsonl`. The project hash is the workspace path with `:` `\` `/` replaced by `-` (e.g., `C:\Users\Developer\Desktop\Arcadia` → `C--Users-Developer-Desktop-Arcadia`).
 2. **`--session-id` for deterministic file matching**: Extension generates a UUID per terminal and passes `claude --session-id <uuid>`. The JSONL file is then `<uuid>.jsonl` — no race conditions with parallel agents.
 3. **Immediate agent creation**: Agent is created as soon as the terminal is launched (before the JSONL file exists). A 1s poll waits for the specific `<uuid>.jsonl` file to appear, then starts file watching.
-3b. **`/clear` reassignment**: A project-level 1s scan watches for unknown JSONL files. Known files are seeded on first scan + pre-registered for each `--session-id`. When an unknown file appears and an agent's terminal is focused, that agent is reassigned to the new file (old watching stops, activity clears, new watching starts).
+3b. **`/clear` reassignment + terminal adoption**: A project-level 1s scan watches for unknown JSONL files. Known files are seeded on first scan + pre-registered for each `--session-id`. When an unknown file appears: if an agent's terminal is focused, that agent is reassigned to the new file (`/clear`). If no agent is focused but the active terminal has no agent, a new agent is adopted for that terminal. The project scan starts on `webviewReady` even with zero agents so external sessions are detected immediately.
 4. **File watching**: Once the JSONL file is found, extension watches it using hybrid `fs.watch` (instant) + 2s polling (backup). Includes partial line buffering to handle mid-write reads.
 5. **Parsing**: Each JSONL line is a complete record with a top-level `type` field:
    - `"assistant"` records contain `message.content[]` with `tool_use` blocks (`id`, `name`, `input`)

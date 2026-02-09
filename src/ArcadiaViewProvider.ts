@@ -10,6 +10,7 @@ import {
 	sendLayout,
 	getProjectDirPath,
 } from './agentManager.js';
+import { ensureProjectScan } from './fileWatcher.js';
 
 export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 	nextAgentId = { current: 1 };
@@ -82,6 +83,16 @@ export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 					this.jsonlPollTimers, this.projectScanTimer, this.activeAgentId,
 					this.webview, this.persistAgents,
 				);
+				// Ensure project scan runs even with no restored agents (to adopt external terminals)
+				const projectDir = getProjectDirPath();
+				if (projectDir) {
+					ensureProjectScan(
+						projectDir, this.knownJsonlFiles, this.projectScanTimer, this.activeAgentId,
+						this.nextAgentId, this.agents,
+						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
+						this.webview, this.persistAgents,
+					);
+				}
 				sendExistingAgents(this.agents, this.context, this.webview);
 				sendLayout(this.context, this.webview);
 			} else if (message.type === 'openSessionsFolder') {

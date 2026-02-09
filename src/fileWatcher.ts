@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import type { AgentState } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
@@ -80,6 +80,7 @@ export function ensureProjectScan(
 	knownJsonlFiles: Set<string>,
 	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
 	activeAgentIdRef: { current: number | null },
+	nextAgentIdRef: { current: number },
 	agents: Map<number, AgentState>,
 	fileWatchers: Map<number, fs.FSWatcher>,
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
@@ -101,7 +102,7 @@ export function ensureProjectScan(
 
 	projectScanTimerRef.current = setInterval(() => {
 		scanForNewJsonlFiles(
-			projectDir, knownJsonlFiles, activeAgentIdRef,
+			projectDir, knownJsonlFiles, activeAgentIdRef, nextAgentIdRef,
 			agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
 			webview, persistAgents,
 		);
@@ -112,6 +113,7 @@ function scanForNewJsonlFiles(
 	projectDir: string,
 	knownJsonlFiles: Set<string>,
 	activeAgentIdRef: { current: number | null },
+	nextAgentIdRef: { current: number },
 	agents: Map<number, AgentState>,
 	fileWatchers: Map<number, fs.FSWatcher>,
 	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
@@ -131,15 +133,77 @@ function scanForNewJsonlFiles(
 		if (!knownJsonlFiles.has(file)) {
 			knownJsonlFiles.add(file);
 			if (activeAgentIdRef.current !== null) {
+				// Active agent focused → /clear reassignment
 				console.log(`[Arcadia] New JSONL detected: ${path.basename(file)}, reassigning to agent ${activeAgentIdRef.current}`);
 				reassignAgentToFile(
 					activeAgentIdRef.current, file,
 					agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
 					webview, persistAgents,
 				);
+			} else {
+				// No active agent → try to adopt the focused terminal
+				const activeTerminal = vscode.window.activeTerminal;
+				if (activeTerminal) {
+					let owned = false;
+					for (const agent of agents.values()) {
+						if (agent.terminalRef === activeTerminal) {
+							owned = true;
+							break;
+						}
+					}
+					if (!owned) {
+						adoptTerminalForFile(
+							activeTerminal, file, projectDir,
+							nextAgentIdRef, agents, activeAgentIdRef,
+							fileWatchers, pollingTimers, waitingTimers, permissionTimers,
+							webview, persistAgents,
+						);
+					}
+				}
 			}
 		}
 	}
+}
+
+function adoptTerminalForFile(
+	terminal: vscode.Terminal,
+	jsonlFile: string,
+	projectDir: string,
+	nextAgentIdRef: { current: number },
+	agents: Map<number, AgentState>,
+	activeAgentIdRef: { current: number | null },
+	fileWatchers: Map<number, fs.FSWatcher>,
+	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+	webview: vscode.Webview | undefined,
+	persistAgents: () => void,
+): void {
+	const id = nextAgentIdRef.current++;
+	const agent: AgentState = {
+		id,
+		terminalRef: terminal,
+		projectDir,
+		jsonlFile,
+		fileOffset: 0,
+		lineBuffer: '',
+		activeToolIds: new Set(),
+		activeToolStatuses: new Map(),
+		activeToolNames: new Map(),
+		activeSubagentToolIds: new Map(),
+		isWaiting: false,
+		permissionSent: false,
+	};
+
+	agents.set(id, agent);
+	activeAgentIdRef.current = id;
+	persistAgents();
+
+	console.log(`[Arcadia] Agent ${id}: adopted terminal "${terminal.name}" for ${path.basename(jsonlFile)}`);
+	webview?.postMessage({ type: 'agentCreated', id });
+
+	startFileWatching(id, jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, webview);
+	readNewLines(id, agents, waitingTimers, permissionTimers, webview);
 }
 
 export function reassignAgentToFile(

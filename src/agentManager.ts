@@ -74,7 +74,7 @@ export function launchNewTerminal(
 
 	ensureProjectScan(
 		projectDir, knownJsonlFiles, projectScanTimerRef, activeAgentIdRef,
-		agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
+		nextAgentIdRef, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
 		webview, persistAgents,
 	);
 
@@ -240,7 +240,7 @@ export function restoreAgents(
 	if (restoredProjectDir) {
 		ensureProjectScan(
 			restoredProjectDir, knownJsonlFiles, projectScanTimerRef, activeAgentIdRef,
-			agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
+			nextAgentIdRef, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
 			webview, doPersist,
 		);
 	}
