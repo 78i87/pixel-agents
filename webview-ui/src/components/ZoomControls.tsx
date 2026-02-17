@@ -1,4 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
+import {
+  ZOOM_MIN,
+  ZOOM_MAX,
+  ZOOM_LEVEL_FADE_DELAY_MS,
+  ZOOM_LEVEL_HIDE_DELAY_MS,
+  ZOOM_LEVEL_FADE_DURATION_SEC,
+} from '../constants.js'
 
 interface ZoomControlsProps {
   zoom: number
@@ -9,15 +16,15 @@ const btnBase: React.CSSProperties = {
   width: 40,
   height: 40,
   padding: 0,
-  background: '#1e1e2e',
-  color: 'rgba(255, 255, 255, 0.8)',
-  border: '2px solid #4a4a6a',
+  background: 'var(--pixel-bg)',
+  color: 'var(--pixel-text)',
+  border: '2px solid var(--pixel-border)',
   borderRadius: 0,
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  boxShadow: '2px 2px 0px #0a0a14',
+  boxShadow: 'var(--pixel-shadow)',
 }
 
 export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
@@ -28,8 +35,8 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevZoomRef = useRef(zoom)
 
-  const minDisabled = zoom <= 1
-  const maxDisabled = zoom >= 10
+  const minDisabled = zoom <= ZOOM_MIN
+  const maxDisabled = zoom >= ZOOM_MAX
 
   // Show zoom level briefly when zoom changes
   useEffect(() => {
@@ -43,16 +50,16 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
     setShowLevel(true)
     setFadeOut(false)
 
-    // Start fade after 1.5s
+    // Start fade after delay
     fadeTimerRef.current = setTimeout(() => {
       setFadeOut(true)
-    }, 1500)
+    }, ZOOM_LEVEL_FADE_DELAY_MS)
 
-    // Hide completely after 2s
+    // Hide completely after delay
     timerRef.current = setTimeout(() => {
       setShowLevel(false)
       setFadeOut(false)
-    }, 2000)
+    }, ZOOM_LEVEL_HIDE_DELAY_MS)
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
@@ -70,17 +77,17 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
             top: 10,
             left: '50%',
             transform: 'translateX(-50%)',
-            zIndex: 50,
-            background: '#1e1e2e',
-            border: '2px solid #4a4a6a',
+            zIndex: 'var(--pixel-controls-z)',
+            background: 'var(--pixel-bg)',
+            border: '2px solid var(--pixel-border)',
             borderRadius: 0,
             padding: '4px 12px',
-            boxShadow: '2px 2px 0px #0a0a14',
+            boxShadow: 'var(--pixel-shadow)',
             fontSize: '26px',
-            color: 'rgba(255, 255, 255, 0.8)',
+            color: 'var(--pixel-text)',
             userSelect: 'none',
             opacity: fadeOut ? 0 : 1,
-            transition: 'opacity 0.5s ease-out',
+            transition: `opacity ${ZOOM_LEVEL_FADE_DURATION_SEC}s ease-out`,
             pointerEvents: 'none',
           }}
         >
@@ -94,7 +101,7 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
           position: 'absolute',
           top: 8,
           left: 8,
-          zIndex: 50,
+          zIndex: 'var(--pixel-controls-z)',
           display: 'flex',
           flexDirection: 'column',
           gap: 4,
@@ -107,9 +114,9 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
           onMouseLeave={() => setHovered(null)}
           style={{
             ...btnBase,
-            background: hovered === 'plus' && !maxDisabled ? 'rgba(255, 255, 255, 0.15)' : btnBase.background,
+            background: hovered === 'plus' && !maxDisabled ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
             cursor: maxDisabled ? 'default' : 'pointer',
-            opacity: maxDisabled ? 0.3 : 1,
+            opacity: maxDisabled ? 'var(--pixel-btn-disabled-opacity)' : 1,
           }}
           title="Zoom in (Ctrl+Scroll)"
         >
@@ -125,9 +132,9 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
           onMouseLeave={() => setHovered(null)}
           style={{
             ...btnBase,
-            background: hovered === 'minus' && !minDisabled ? 'rgba(255, 255, 255, 0.15)' : btnBase.background,
+            background: hovered === 'minus' && !minDisabled ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
             cursor: minDisabled ? 'default' : 'pointer',
-            opacity: minDisabled ? 0.3 : 1,
+            opacity: minDisabled ? 'var(--pixel-btn-disabled-opacity)' : 1,
           }}
           title="Zoom out (Ctrl+Scroll)"
         >

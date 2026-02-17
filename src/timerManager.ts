@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import type { AgentState } from './types.js';
+import { PERMISSION_TIMER_DELAY_MS } from './constants.js';
 
 export function clearAgentActivity(
 	agent: AgentState | undefined,
@@ -116,6 +117,6 @@ export function startPermissionTimer(
 				});
 			}
 		}
-	}, 5000);
+	}, PERMISSION_TIMER_DELAY_MS);
 	permissionTimers.set(agentId, timer);
 }

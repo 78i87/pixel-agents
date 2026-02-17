@@ -13,22 +13,22 @@ const panelStyle: React.CSSProperties = {
   position: 'absolute',
   bottom: 10,
   left: 10,
-  zIndex: 50,
+  zIndex: 'var(--pixel-controls-z)',
   display: 'flex',
   alignItems: 'center',
   gap: 4,
-  background: '#1e1e2e',
-  border: '2px solid #4a4a6a',
+  background: 'var(--pixel-bg)',
+  border: '2px solid var(--pixel-border)',
   borderRadius: 0,
   padding: '4px 6px',
-  boxShadow: '2px 2px 0px #0a0a14',
+  boxShadow: 'var(--pixel-shadow)',
 }
 
 const btnBase: React.CSSProperties = {
   padding: '5px 10px',
   fontSize: '24px',
-  color: 'rgba(255, 255, 255, 0.8)',
-  background: 'rgba(255, 255, 255, 0.08)',
+  color: 'var(--pixel-text)',
+  background: 'var(--pixel-btn-bg)',
   border: '2px solid transparent',
   borderRadius: 0,
   cursor: 'pointer',
@@ -36,8 +36,8 @@ const btnBase: React.CSSProperties = {
 
 const btnActive: React.CSSProperties = {
   ...btnBase,
-  background: 'rgba(90, 140, 255, 0.25)',
-  border: '2px solid #5a8cff',
+  background: 'var(--pixel-active-bg)',
+  border: '2px solid var(--pixel-accent)',
 }
 
 
@@ -62,10 +62,10 @@ export function BottomToolbar({
           padding: '5px 12px',
           background:
             hovered === 'agent'
-              ? 'rgba(90, 200, 140, 0.3)'
-              : 'rgba(90, 200, 140, 0.15)',
-          border: '2px solid #5ac88c',
-          color: 'rgba(200, 255, 220, 0.95)',
+              ? 'var(--pixel-agent-hover-bg)'
+              : 'var(--pixel-agent-bg)',
+          border: '2px solid var(--pixel-agent-border)',
+          color: 'var(--pixel-agent-text)',
         }}
       >
         + Agent
@@ -79,7 +79,7 @@ export function BottomToolbar({
             ? { ...btnActive }
             : {
                 ...btnBase,
-                background: hovered === 'edit' ? 'rgba(255, 255, 255, 0.15)' : btnBase.background,
+                background: hovered === 'edit' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
               }
         }
         title="Edit office layout"
@@ -96,7 +96,7 @@ export function BottomToolbar({
               ? { ...btnActive }
               : {
                   ...btnBase,
-                  background: hovered === 'settings' ? 'rgba(255, 255, 255, 0.15)' : btnBase.background,
+                  background: hovered === 'settings' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
                 }
           }
           title="Settings"

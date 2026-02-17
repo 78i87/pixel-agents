@@ -5,6 +5,7 @@ import type { EditorRenderState, SelectionRenderState, DeleteButtonBounds, Rotat
 import { startGameLoop } from '../engine/gameLoop.js'
 import { renderFrame } from '../engine/renderer.js'
 import { TILE_SIZE, EditTool } from '../types.js'
+import { CAMERA_FOLLOW_LERP, CAMERA_FOLLOW_SNAP_THRESHOLD, ZOOM_MIN, ZOOM_MAX } from '../../constants.js'
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js'
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js'
 import { vscode } from '../../vscodeApi.js'
@@ -160,15 +161,14 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
             const mapH = layout.rows * TILE_SIZE * zoom
             const targetX = mapW / 2 - followCh.x * zoom
             const targetY = mapH / 2 - followCh.y * zoom
-            const lerpFactor = 0.1
             const dx = targetX - panRef.current.x
             const dy = targetY - panRef.current.y
-            if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+            if (Math.abs(dx) < CAMERA_FOLLOW_SNAP_THRESHOLD && Math.abs(dy) < CAMERA_FOLLOW_SNAP_THRESHOLD) {
               panRef.current = { x: targetX, y: targetY }
             } else {
               panRef.current = {
-                x: panRef.current.x + dx * lerpFactor,
-                y: panRef.current.y + dy * lerpFactor,
+                x: panRef.current.x + dx * CAMERA_FOLLOW_LERP,
+                y: panRef.current.y + dy * CAMERA_FOLLOW_LERP,
               }
             }
           }
@@ -608,7 +608,7 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
       if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault()
       const delta = e.deltaY < 0 ? 1 : -1
-      const newZoom = Math.max(1, Math.min(10, zoom + delta))
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta))
       if (newZoom !== zoom) {
         onZoomChange(newZoom)
       }

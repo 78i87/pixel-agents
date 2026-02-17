@@ -9,6 +9,20 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as vscode from 'vscode'
 import { PNG } from 'pngjs'
+import {
+  PNG_ALPHA_THRESHOLD,
+  WALL_PIECE_WIDTH,
+  WALL_PIECE_HEIGHT,
+  WALL_GRID_COLS,
+  WALL_BITMASK_COUNT,
+  FLOOR_PATTERN_COUNT,
+  FLOOR_TILE_SIZE,
+  CHARACTER_DIRECTIONS,
+  CHAR_FRAME_W,
+  CHAR_FRAME_H,
+  CHAR_FRAMES_PER_ROW,
+  CHAR_COUNT,
+} from './constants.js'
 
 export interface FurnitureAsset {
   id: string
@@ -124,7 +138,7 @@ function pngToSpriteData(pngBuffer: Buffer, width: number, height: number): stri
         const a = data[pixelIndex + 3]
 
         // If alpha is near zero, treat as transparent
-        if (a < 128) {
+        if (a < PNG_ALPHA_THRESHOLD) {
           row.push('')
         } else {
           // Convert RGB to hex color string
@@ -172,24 +186,20 @@ export async function loadWallTiles(
     const pngBuffer = fs.readFileSync(wallPath)
     const png = PNG.sync.read(pngBuffer)
 
-    const PIECE_W = 16
-    const PIECE_H = 32
-    const GRID_COLS = 4
-
     const sprites: string[][][] = []
-    for (let mask = 0; mask < 16; mask++) {
-      const ox = (mask % GRID_COLS) * PIECE_W
-      const oy = Math.floor(mask / GRID_COLS) * PIECE_H
+    for (let mask = 0; mask < WALL_BITMASK_COUNT; mask++) {
+      const ox = (mask % WALL_GRID_COLS) * WALL_PIECE_WIDTH
+      const oy = Math.floor(mask / WALL_GRID_COLS) * WALL_PIECE_HEIGHT
       const sprite: string[][] = []
-      for (let r = 0; r < PIECE_H; r++) {
+      for (let r = 0; r < WALL_PIECE_HEIGHT; r++) {
         const row: string[] = []
-        for (let c = 0; c < PIECE_W; c++) {
+        for (let c = 0; c < WALL_PIECE_WIDTH; c++) {
           const idx = ((oy + r) * png.width + (ox + c)) * 4
           const rv = png.data[idx]
           const gv = png.data[idx + 1]
           const bv = png.data[idx + 2]
           const av = png.data[idx + 3]
-          if (av < 128) {
+          if (av < PNG_ALPHA_THRESHOLD) {
             row.push('')
           } else {
             row.push(`#${rv.toString(16).padStart(2, '0')}${gv.toString(16).padStart(2, '0')}${bv.toString(16).padStart(2, '0')}`.toUpperCase())
@@ -242,22 +252,19 @@ export async function loadFloorTiles(
     console.log('[AssetLoader] Loading floor tiles from:', floorPath)
     const pngBuffer = fs.readFileSync(floorPath)
     const png = PNG.sync.read(pngBuffer)
-    const tileCount = 7
-    const tileSize = 16
-
     const sprites: string[][][] = []
-    for (let t = 0; t < tileCount; t++) {
+    for (let t = 0; t < FLOOR_PATTERN_COUNT; t++) {
       const sprite: string[][] = []
-      for (let y = 0; y < tileSize; y++) {
+      for (let y = 0; y < FLOOR_TILE_SIZE; y++) {
         const row: string[] = []
-        for (let x = 0; x < tileSize; x++) {
-          const px = t * tileSize + x
+        for (let x = 0; x < FLOOR_TILE_SIZE; x++) {
+          const px = t * FLOOR_TILE_SIZE + x
           const idx = (y * png.width + px) * 4
           const r = png.data[idx]
           const g = png.data[idx + 1]
           const b = png.data[idx + 2]
           const a = png.data[idx + 3]
-          if (a < 128) {
+          if (a < PNG_ALPHA_THRESHOLD) {
             row.push('')
           } else {
             row.push(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`.toUpperCase())
@@ -303,10 +310,6 @@ export interface LoadedCharacterSprites {
   characters: CharacterDirectionSprites[]
 }
 
-const CHAR_FRAME_W = 16
-const CHAR_FRAME_H = 32
-const CHAR_FRAMES_PER_ROW = 7
-const CHAR_COUNT = 6
 
 /**
  * Load pre-colored character sprites from assets/characters/ (6 PNGs, each 112×96).
@@ -329,7 +332,7 @@ export async function loadCharacterSprites(
       const pngBuffer = fs.readFileSync(filePath)
       const png = PNG.sync.read(pngBuffer)
 
-      const directions = ['down', 'up', 'right'] as const
+      const directions = CHARACTER_DIRECTIONS
       const charData: CharacterDirectionSprites = { down: [], up: [], right: [] }
 
       for (let dirIdx = 0; dirIdx < directions.length; dirIdx++) {
@@ -348,7 +351,7 @@ export async function loadCharacterSprites(
               const g = png.data[idx + 1]
               const b = png.data[idx + 2]
               const a = png.data[idx + 3]
-              if (a < 128) {
+              if (a < PNG_ALPHA_THRESHOLD) {
                 row.push('')
               } else {
                 row.push(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`.toUpperCase())

@@ -3,6 +3,7 @@ import type { ToolActivity } from '../types.js'
 import type { OfficeState } from '../engine/officeState.js'
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js'
 import { TILE_SIZE, CharacterState } from '../types.js'
+import { TOOL_OVERLAY_VERTICAL_OFFSET, CHARACTER_SITTING_OFFSET_PX } from '../../constants.js'
 
 interface ToolOverlayProps {
   officeState: OfficeState
@@ -92,9 +93,9 @@ export function ToolOverlay({
         if (!isSelected && !isHovered) return null
 
         // Position above character
-        const sittingOffset = ch.state === CharacterState.TYPE ? 6 : 0
+        const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
         const screenX = (deviceOffsetX + ch.x * zoom) / dpr
-        const screenY = (deviceOffsetY + (ch.y + sittingOffset - 32) * zoom) / dpr
+        const screenY = (deviceOffsetY + (ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET) * zoom) / dpr
 
         // Get activity text
         const subHasPermission = isSub && ch.bubbleType === 'permission'
@@ -118,9 +119,9 @@ export function ToolOverlay({
 
         let dotColor: string | null = null
         if (hasPermission) {
-          dotColor = 'var(--vscode-charts-yellow, #cca700)'
+          dotColor = 'var(--pixel-status-permission)'
         } else if (isActive && hasActiveTools) {
-          dotColor = 'var(--vscode-charts-blue, #3794ff)'
+          dotColor = 'var(--pixel-status-active)'
         }
 
         return (
@@ -135,7 +136,7 @@ export function ToolOverlay({
               flexDirection: 'column',
               alignItems: 'center',
               pointerEvents: isSelected ? 'auto' : 'none',
-              zIndex: isSelected ? 110 : 100,
+              zIndex: isSelected ? 'var(--pixel-overlay-selected-z)' : 'var(--pixel-overlay-z)',
             }}
           >
             <div
@@ -143,13 +144,13 @@ export function ToolOverlay({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 5,
-                background: '#1e1e2e',
+                background: 'var(--pixel-bg)',
                 border: isSelected
-                  ? '2px solid #6a6a8a'
-                  : '2px solid #4a4a6a',
+                  ? '2px solid var(--pixel-border-light)'
+                  : '2px solid var(--pixel-border)',
                 borderRadius: 0,
                 padding: isSelected ? '3px 6px 3px 8px' : '3px 8px',
-                boxShadow: '2px 2px 0px #0a0a14',
+                boxShadow: 'var(--pixel-shadow)',
                 whiteSpace: 'nowrap',
                 maxWidth: 220,
               }}
@@ -187,7 +188,7 @@ export function ToolOverlay({
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: 'rgba(255, 255, 255, 0.5)',
+                    color: 'var(--pixel-close-text)',
                     cursor: 'pointer',
                     padding: '0 2px',
                     fontSize: '26px',
@@ -196,10 +197,10 @@ export function ToolOverlay({
                     flexShrink: 0,
                   }}
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = '#e55'
+                    (e.currentTarget as HTMLElement).style.color = 'var(--pixel-close-hover)'
                   }}
                   onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.color = 'rgba(255, 255, 255, 0.5)'
+                    (e.currentTarget as HTMLElement).style.color = 'var(--pixel-close-text)'
                   }}
                 >
                   ×

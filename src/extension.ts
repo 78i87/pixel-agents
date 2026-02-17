@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ArcadiaViewProvider } from './ArcadiaViewProvider.js';
+import { VIEW_ID, COMMAND_SHOW_PANEL } from './constants.js';
 
 let providerInstance: ArcadiaViewProvider | undefined;
 
@@ -8,12 +9,12 @@ export function activate(context: vscode.ExtensionContext) {
 	providerInstance = provider;
 
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider('arcadia.panelView', provider)
+		vscode.window.registerWebviewViewProvider(VIEW_ID, provider)
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('arcadia.showPanel', () => {
-			vscode.commands.executeCommand('arcadia.panelView.focus');
+		vscode.commands.registerCommand(COMMAND_SHOW_PANEL, () => {
+			vscode.commands.executeCommand(`${VIEW_ID}.focus`);
 		})
 	);
 }

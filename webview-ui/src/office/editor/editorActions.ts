@@ -1,4 +1,5 @@
 import { TileType, MAX_COLS, MAX_ROWS } from '../types.js'
+import { DEFAULT_NEUTRAL_COLOR } from '../../constants.js'
 import type { TileType as TileTypeVal, OfficeLayout, PlacedFurniture, FloorColor } from '../types.js'
 import { getCatalogEntry, getRotatedType, getToggledType } from '../layout/furnitureCatalog.js'
 import { getPlacementBlockedTiles } from '../layout/layoutSerializer.js'
@@ -9,7 +10,7 @@ export function paintTile(layout: OfficeLayout, col: number, row: number, tileTy
   if (idx < 0 || idx >= layout.tiles.length) return layout
 
   const existingColors = layout.tileColors || new Array(layout.tiles.length).fill(null)
-  const newColor = color ?? (tileType === TileType.WALL || tileType === TileType.VOID ? null : { h: 0, s: 0, b: 0, c: 0 })
+  const newColor = color ?? (tileType === TileType.WALL || tileType === TileType.VOID ? null : { ...DEFAULT_NEUTRAL_COLOR })
 
   // Check if anything actually changed
   if (layout.tiles[idx] === tileType) {

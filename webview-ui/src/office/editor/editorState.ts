@@ -1,5 +1,6 @@
 import { EditTool, TileType } from '../types.js'
 import type { TileType as TileTypeVal, OfficeLayout, FloorColor } from '../types.js'
+import { UNDO_STACK_MAX_SIZE, DEFAULT_FLOOR_COLOR, DEFAULT_WALL_COLOR } from '../../constants.js'
 
 export class EditorState {
   isEditMode = false
@@ -8,10 +9,10 @@ export class EditorState {
   selectedFurnitureType: string = 'desk' // FurnitureType.DESK or asset ID
 
   // Floor color settings (applied to new tiles when painting)
-  floorColor: FloorColor = { h: 35, s: 30, b: 15, c: 0 }
+  floorColor: FloorColor = { ...DEFAULT_FLOOR_COLOR }
 
   // Wall color settings (applied to new wall tiles when painting)
-  wallColor: FloorColor = { h: 240, s: 25, b: 0, c: 0 }
+  wallColor: FloorColor = { ...DEFAULT_WALL_COLOR }
 
   // Tracks toggle direction during wall drag (true=adding walls, false=removing, null=undecided)
   wallDragAdding: boolean | null = null
@@ -48,7 +49,7 @@ export class EditorState {
   pushUndo(layout: OfficeLayout): void {
     this.undoStack.push(layout)
     // Limit undo stack size
-    if (this.undoStack.length > 50) {
+    if (this.undoStack.length > UNDO_STACK_MAX_SIZE) {
       this.undoStack.shift()
     }
   }
@@ -59,7 +60,7 @@ export class EditorState {
 
   pushRedo(layout: OfficeLayout): void {
     this.redoStack.push(layout)
-    if (this.redoStack.length > 50) {
+    if (this.redoStack.length > UNDO_STACK_MAX_SIZE) {
       this.redoStack.shift()
     }
   }

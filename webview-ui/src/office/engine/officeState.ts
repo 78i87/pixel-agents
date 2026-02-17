@@ -1,4 +1,18 @@
 import { TILE_SIZE, MATRIX_EFFECT_DURATION, CharacterState, Direction } from '../types.js'
+import {
+  PALETTE_COUNT,
+  HUE_SHIFT_MIN_DEG,
+  HUE_SHIFT_RANGE_DEG,
+  WAITING_BUBBLE_DURATION_SEC,
+  DISMISS_BUBBLE_FAST_FADE_SEC,
+  INACTIVE_SEAT_TIMER_MIN_SEC,
+  INACTIVE_SEAT_TIMER_RANGE_SEC,
+  AUTO_ON_FACING_DEPTH,
+  AUTO_ON_SIDE_DEPTH,
+  CHARACTER_SITTING_OFFSET_PX,
+  CHARACTER_HIT_HALF_WIDTH,
+  CHARACTER_HIT_HEIGHT,
+} from '../../constants.js'
 import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
 import { createCharacter, updateCharacter } from './characters.js'
 import { matrixEffectSeeds } from './matrixEffect.js'
@@ -159,7 +173,7 @@ export class OfficeState {
    */
   private pickDiversePalette(): { palette: number; hueShift: number } {
     // Count how many non-sub-agents use each base palette (0-5)
-    const counts = [0, 0, 0, 0, 0, 0]
+    const counts = new Array(PALETTE_COUNT).fill(0) as number[]
     for (const ch of this.characters.values()) {
       if (ch.isSubagent) continue
       counts[ch.palette]++
@@ -167,14 +181,14 @@ export class OfficeState {
     const minCount = Math.min(...counts)
     // Available = palettes at the minimum count (least used)
     const available: number[] = []
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < PALETTE_COUNT; i++) {
       if (counts[i] === minCount) available.push(i)
     }
     const palette = available[Math.floor(Math.random() * available.length)]
     // First round (minCount === 0): no hue shift. Subsequent rounds: random ≥45°.
     let hueShift = 0
     if (minCount > 0) {
-      hueShift = 45 + Math.floor(Math.random() * 271) // 45–315
+      hueShift = HUE_SHIFT_MIN_DEG + Math.floor(Math.random() * HUE_SHIFT_RANGE_DEG)
     }
     return { palette, hueShift }
   }
@@ -287,7 +301,7 @@ export class OfficeState {
       ch.frame = 0
       ch.frameTimer = 0
       if (!ch.isActive) {
-        ch.seatTimer = 3.0 + Math.random() * 2.0
+        ch.seatTimer = INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC
       }
     }
   }
@@ -314,7 +328,7 @@ export class OfficeState {
       ch.frame = 0
       ch.frameTimer = 0
       if (!ch.isActive) {
-        ch.seatTimer = 3.0 + Math.random() * 2.0
+        ch.seatTimer = INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC
       }
     }
   }
@@ -476,13 +490,13 @@ export class OfficeState {
       const dCol = seat.facingDir === Direction.RIGHT ? 1 : seat.facingDir === Direction.LEFT ? -1 : 0
       const dRow = seat.facingDir === Direction.DOWN ? 1 : seat.facingDir === Direction.UP ? -1 : 0
       // Check tiles in the facing direction (desk could be 1-3 tiles deep)
-      for (let d = 1; d <= 3; d++) {
+      for (let d = 1; d <= AUTO_ON_FACING_DEPTH; d++) {
         const tileCol = seat.seatCol + dCol * d
         const tileRow = seat.seatRow + dRow * d
         autoOnTiles.add(`${tileCol},${tileRow}`)
       }
       // Also check tiles to the sides of the facing direction (desks can be wide)
-      for (let d = 1; d <= 2; d++) {
+      for (let d = 1; d <= AUTO_ON_SIDE_DEPTH; d++) {
         const baseCol = seat.seatCol + dCol * d
         const baseRow = seat.seatRow + dRow * d
         if (dCol !== 0) {
@@ -551,7 +565,7 @@ export class OfficeState {
     const ch = this.characters.get(id)
     if (ch) {
       ch.bubbleType = 'waiting'
-      ch.bubbleTimer = 2.0
+      ch.bubbleTimer = WAITING_BUBBLE_DURATION_SEC
     }
   }
 
@@ -564,7 +578,7 @@ export class OfficeState {
       ch.bubbleTimer = 0
     } else if (ch.bubbleType === 'waiting') {
       // Trigger immediate fade (0.3s remaining)
-      ch.bubbleTimer = Math.min(ch.bubbleTimer, 0.3)
+      ch.bubbleTimer = Math.min(ch.bubbleTimer, DISMISS_BUBBLE_FAST_FADE_SEC)
     }
   }
 
@@ -620,11 +634,11 @@ export class OfficeState {
       if (ch.matrixEffect === 'despawn') continue
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
-      const sittingOffset = ch.state === CharacterState.TYPE ? 6 : 0
+      const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
       const anchorY = ch.y + sittingOffset
-      const left = ch.x - 8
-      const right = ch.x + 8
-      const top = anchorY - 24
+      const left = ch.x - CHARACTER_HIT_HALF_WIDTH
+      const right = ch.x + CHARACTER_HIT_HALF_WIDTH
+      const top = anchorY - CHARACTER_HIT_HEIGHT
       const bottom = anchorY
       if (worldX >= left && worldX <= right && worldY >= top && worldY <= bottom) {
         return ch.id

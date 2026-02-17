@@ -6,6 +6,39 @@ import { getCharacterSprite } from './characters.js'
 import { renderMatrixEffect } from './matrixEffect.js'
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js'
 import { hasWallSprites, getWallInstances, wallColorToHex } from '../wallTiles.js'
+import {
+  CHARACTER_SITTING_OFFSET_PX,
+  CHARACTER_Z_SORT_OFFSET,
+  OUTLINE_Z_SORT_OFFSET,
+  SELECTED_OUTLINE_ALPHA,
+  HOVERED_OUTLINE_ALPHA,
+  GHOST_PREVIEW_SPRITE_ALPHA,
+  GHOST_PREVIEW_TINT_ALPHA,
+  SELECTION_DASH_PATTERN,
+  BUTTON_MIN_RADIUS,
+  BUTTON_RADIUS_ZOOM_FACTOR,
+  BUTTON_ICON_SIZE_FACTOR,
+  BUTTON_LINE_WIDTH_MIN,
+  BUTTON_LINE_WIDTH_ZOOM_FACTOR,
+  BUBBLE_FADE_DURATION_SEC,
+  BUBBLE_SITTING_OFFSET_PX,
+  BUBBLE_VERTICAL_OFFSET_PX,
+  FALLBACK_FLOOR_COLOR,
+  SEAT_OWN_COLOR,
+  SEAT_AVAILABLE_COLOR,
+  SEAT_BUSY_COLOR,
+  GRID_LINE_COLOR,
+  VOID_TILE_OUTLINE_COLOR,
+  VOID_TILE_DASH_PATTERN,
+  GHOST_BORDER_HOVER_FILL,
+  GHOST_BORDER_HOVER_STROKE,
+  GHOST_BORDER_STROKE,
+  GHOST_VALID_TINT,
+  GHOST_INVALID_TINT,
+  SELECTION_HIGHLIGHT_COLOR,
+  DELETE_BUTTON_BG,
+  ROTATE_BUTTON_BG,
+} from '../../constants.js'
 
 // ── Render functions ────────────────────────────────────────────
 
@@ -39,7 +72,7 @@ export function renderTileGrid(
           const wallColor = tileColors?.[colorIdx]
           ctx.fillStyle = wallColor ? wallColorToHex(wallColor) : WALL_COLOR
         } else {
-          ctx.fillStyle = '#808080'
+          ctx.fillStyle = FALLBACK_FLOOR_COLOR
         }
         ctx.fillRect(offsetX + c * s, offsetY + r * s, s, s)
         continue
@@ -92,7 +125,7 @@ export function renderScene(
     const spriteData = getCharacterSprite(ch, sprites)
     const cached = getCachedSprite(spriteData, zoom)
     // Sitting offset: shift character down when seated so they visually sit in the chair
-    const sittingOffset = ch.state === CharacterState.TYPE ? 6 : 0
+    const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
     // Anchor at bottom-center of character — round to integer device pixels
     const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
     const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height)
@@ -100,7 +133,7 @@ export function renderScene(
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture
     // at lower rows (e.g. desks, bookshelves that occlude from below).
-    const charZY = ch.y + TILE_SIZE / 2 + 0.5
+    const charZY = ch.y + TILE_SIZE / 2 + CHARACTER_Z_SORT_OFFSET
 
     // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
     if (ch.matrixEffect) {
@@ -121,13 +154,13 @@ export function renderScene(
     const isSelected = selectedAgentId !== null && ch.id === selectedAgentId
     const isHovered = hoveredAgentId !== null && ch.id === hoveredAgentId
     if (isSelected || isHovered) {
-      const outlineAlpha = isSelected ? 1.0 : 0.5
+      const outlineAlpha = isSelected ? SELECTED_OUTLINE_ALPHA : HOVERED_OUTLINE_ALPHA
       const outlineData = getOutlineSprite(spriteData)
       const outlineCached = getCachedSprite(outlineData, zoom)
       const olDrawX = drawX - zoom  // 1 sprite-pixel offset, scaled
       const olDrawY = drawY - zoom  // outline follows sitting offset via drawY
       drawables.push({
-        zY: charZY - 0.001, // sort just before character
+        zY: charZY - OUTLINE_Z_SORT_OFFSET, // sort just before character
         draw: (c) => {
           c.save()
           c.globalAlpha = outlineAlpha
@@ -179,13 +212,13 @@ export function renderSeatIndicators(
 
     if (selectedChar.seatId === uid) {
       // Selected agent's own seat — blue
-      ctx.fillStyle = 'rgba(0, 127, 212, 0.35)'
+      ctx.fillStyle = SEAT_OWN_COLOR
     } else if (!seat.assigned) {
       // Available seat — green
-      ctx.fillStyle = 'rgba(0, 200, 80, 0.35)'
+      ctx.fillStyle = SEAT_AVAILABLE_COLOR
     } else {
       // Busy (assigned to another agent) — red
-      ctx.fillStyle = 'rgba(220, 50, 50, 0.35)'
+      ctx.fillStyle = SEAT_BUSY_COLOR
     }
     ctx.fillRect(x, y, s, s)
     break
@@ -204,7 +237,7 @@ export function renderGridOverlay(
   tileMap?: TileTypeVal[][],
 ): void {
   const s = TILE_SIZE * zoom
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+  ctx.strokeStyle = GRID_LINE_COLOR
   ctx.lineWidth = 1
   ctx.beginPath()
   // Vertical lines — offset by 0.5 for crisp 1px lines
@@ -224,9 +257,9 @@ export function renderGridOverlay(
   // Draw faint dashed outlines on VOID tiles
   if (tileMap) {
     ctx.save()
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.strokeStyle = VOID_TILE_OUTLINE_COLOR
     ctx.lineWidth = 1
-    ctx.setLineDash([2, 2])
+    ctx.setLineDash(VOID_TILE_DASH_PATTERN)
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (tileMap[r]?.[c] === TileType.VOID) {
@@ -270,12 +303,12 @@ export function renderGhostBorder(
     const y = offsetY + r * s
     const isHovered = c === ghostHoverCol && r === ghostHoverRow
     if (isHovered) {
-      ctx.fillStyle = 'rgba(60, 130, 220, 0.25)'
+      ctx.fillStyle = GHOST_BORDER_HOVER_FILL
       ctx.fillRect(x, y, s, s)
     }
-    ctx.strokeStyle = isHovered ? 'rgba(60, 130, 220, 0.5)' : 'rgba(255, 255, 255, 0.06)'
+    ctx.strokeStyle = isHovered ? GHOST_BORDER_HOVER_STROKE : GHOST_BORDER_STROKE
     ctx.lineWidth = 1
-    ctx.setLineDash([2, 2])
+    ctx.setLineDash(VOID_TILE_DASH_PATTERN)
     ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1)
   }
 
@@ -296,11 +329,11 @@ export function renderGhostPreview(
   const x = offsetX + col * TILE_SIZE * zoom
   const y = offsetY + row * TILE_SIZE * zoom
   ctx.save()
-  ctx.globalAlpha = 0.5
+  ctx.globalAlpha = GHOST_PREVIEW_SPRITE_ALPHA
   ctx.drawImage(cached, x, y)
   // Tint overlay
-  ctx.globalAlpha = 0.25
-  ctx.fillStyle = valid ? '#00ff00' : '#ff0000'
+  ctx.globalAlpha = GHOST_PREVIEW_TINT_ALPHA
+  ctx.fillStyle = valid ? GHOST_VALID_TINT : GHOST_INVALID_TINT
   ctx.fillRect(x, y, cached.width, cached.height)
   ctx.restore()
 }
@@ -319,9 +352,9 @@ export function renderSelectionHighlight(
   const x = offsetX + col * s
   const y = offsetY + row * s
   ctx.save()
-  ctx.strokeStyle = '#007fd4'
+  ctx.strokeStyle = SELECTION_HIGHLIGHT_COLOR
   ctx.lineWidth = 2
-  ctx.setLineDash([4, 3])
+  ctx.setLineDash(SELECTION_DASH_PATTERN)
   ctx.strokeRect(x + 1, y + 1, w * s - 2, h * s - 2)
   ctx.restore()
 }
@@ -340,20 +373,20 @@ export function renderDeleteButton(
   // Position at top-right corner of selected furniture
   const cx = offsetX + (col + w) * s + 1
   const cy = offsetY + row * s - 1
-  const radius = Math.max(6, zoom * 3)
+  const radius = Math.max(BUTTON_MIN_RADIUS, zoom * BUTTON_RADIUS_ZOOM_FACTOR)
 
   // Circle background
   ctx.save()
   ctx.beginPath()
   ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(200, 50, 50, 0.85)'
+  ctx.fillStyle = DELETE_BUTTON_BG
   ctx.fill()
 
   // X mark
   ctx.strokeStyle = '#fff'
-  ctx.lineWidth = Math.max(1.5, zoom * 0.5)
+  ctx.lineWidth = Math.max(BUTTON_LINE_WIDTH_MIN, zoom * BUTTON_LINE_WIDTH_ZOOM_FACTOR)
   ctx.lineCap = 'round'
-  const xSize = radius * 0.45
+  const xSize = radius * BUTTON_ICON_SIZE_FACTOR
   ctx.beginPath()
   ctx.moveTo(cx - xSize, cy - xSize)
   ctx.lineTo(cx + xSize, cy + xSize)
@@ -377,7 +410,7 @@ export function renderRotateButton(
 ): RotateButtonBounds {
   const s = TILE_SIZE * zoom
   // Position to the left of the delete button (which is at top-right corner)
-  const radius = Math.max(6, zoom * 3)
+  const radius = Math.max(BUTTON_MIN_RADIUS, zoom * BUTTON_RADIUS_ZOOM_FACTOR)
   const cx = offsetX + col * s - 1
   const cy = offsetY + row * s - 1
 
@@ -385,14 +418,14 @@ export function renderRotateButton(
   ctx.save()
   ctx.beginPath()
   ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(50, 120, 200, 0.85)'
+  ctx.fillStyle = ROTATE_BUTTON_BG
   ctx.fill()
 
   // Circular arrow icon
   ctx.strokeStyle = '#fff'
-  ctx.lineWidth = Math.max(1.5, zoom * 0.5)
+  ctx.lineWidth = Math.max(BUTTON_LINE_WIDTH_MIN, zoom * BUTTON_LINE_WIDTH_ZOOM_FACTOR)
   ctx.lineCap = 'round'
-  const arcR = radius * 0.45
+  const arcR = radius * BUTTON_ICON_SIZE_FACTOR
   ctx.beginPath()
   // Draw a 270-degree arc
   ctx.arc(cx, cy, arcR, -Math.PI * 0.8, Math.PI * 0.7)
@@ -414,8 +447,6 @@ export function renderRotateButton(
 
 // ── Speech bubbles ──────────────────────────────────────────────
 
-const BUBBLE_FADE_DURATION = 0.5
-
 export function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
@@ -432,17 +463,17 @@ export function renderBubbles(
 
     // Compute opacity: permission = full, waiting = fade in last 0.5s
     let alpha = 1.0
-    if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION) {
-      alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION
+    if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
+      alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC
     }
 
     const cached = getCachedSprite(sprite, zoom)
     // Position: centered above the character's head
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24
     // Place bubble above head with a small gap; follow sitting offset
-    const sittingOff = ch.state === CharacterState.TYPE ? 10 : 0
+    const sittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0
     const bubbleX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
-    const bubbleY = Math.round(offsetY + (ch.y + sittingOff - 24) * zoom - cached.height - 1 * zoom)
+    const bubbleY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom - cached.height - 1 * zoom)
 
     ctx.save()
     if (alpha < 1.0) ctx.globalAlpha = alpha

@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import type { AgentState, PersistedAgent } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer } from './timerManager.js';
 import { startFileWatching, readNewLines, ensureProjectScan } from './fileWatcher.js';
+import { JSONL_POLL_INTERVAL_MS, TERMINAL_NAME_PREFIX, WORKSPACE_KEY_AGENTS, WORKSPACE_KEY_AGENT_SEATS, WORKSPACE_KEY_LAYOUT } from './constants.js';
 
 export function getProjectDirPath(cwd?: string): string | null {
 	const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -31,7 +32,7 @@ export function launchNewTerminal(
 	const idx = nextTerminalIndexRef.current++;
 	const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 	const terminal = vscode.window.createTerminal({
-		name: `Claude Code #${idx}`,
+		name: `${TERMINAL_NAME_PREFIX} #${idx}`,
 		cwd,
 	});
 	terminal.show();
@@ -90,7 +91,7 @@ export function launchNewTerminal(
 				readNewLines(id, agents, waitingTimers, permissionTimers, webview);
 			}
 		} catch { /* file may not exist yet */ }
-	}, 1000);
+	}, JSONL_POLL_INTERVAL_MS);
 	jsonlPollTimers.set(id, pollTimer);
 }
 
@@ -141,7 +142,7 @@ export function persistAgents(
 			projectDir: agent.projectDir,
 		});
 	}
-	context.workspaceState.update('arcadia.agents', persisted);
+	context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
 }
 
 export function restoreAgents(
@@ -160,7 +161,7 @@ export function restoreAgents(
 	webview: vscode.Webview | undefined,
 	doPersist: () => void,
 ): void {
-	const persisted = context.workspaceState.get<PersistedAgent[]>('arcadia.agents', []);
+	const persisted = context.workspaceState.get<PersistedAgent[]>(WORKSPACE_KEY_AGENTS, []);
 	if (persisted.length === 0) return;
 
 	const liveTerminals = vscode.window.terminals;
@@ -221,7 +222,7 @@ export function restoreAgents(
 							startFileWatching(p.id, agent.jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, webview);
 						}
 					} catch { /* file may not exist yet */ }
-				}, 1000);
+				}, JSONL_POLL_INTERVAL_MS);
 				jsonlPollTimers.set(p.id, pollTimer);
 			}
 		} catch { /* ignore errors during restore */ }
@@ -261,7 +262,7 @@ export function sendExistingAgents(
 	agentIds.sort((a, b) => a - b);
 
 	// Include persisted palette/seatId from separate key
-	const agentMeta = context.workspaceState.get<Record<string, { palette?: number; seatId?: string }>>('arcadia.agentSeats', {});
+	const agentMeta = context.workspaceState.get<Record<string, { palette?: number; seatId?: string }>>(WORKSPACE_KEY_AGENT_SEATS, {});
 	console.log(`[Arcadia] sendExistingAgents: agents=${JSON.stringify(agentIds)}, meta=${JSON.stringify(agentMeta)}`);
 
 	webview.postMessage({
@@ -304,7 +305,7 @@ export function sendLayout(
 	webview: vscode.Webview | undefined,
 ): void {
 	if (!webview) return;
-	const layout = context.workspaceState.get('arcadia.layout', null);
+	const layout = context.workspaceState.get(WORKSPACE_KEY_LAYOUT, null);
 	webview.postMessage({
 		type: 'layoutLoaded',
 		layout,

@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { AgentState } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
+import { FILE_WATCHER_POLL_INTERVAL_MS, PROJECT_SCAN_INTERVAL_MS } from './constants.js';
 
 export function startFileWatching(
 	agentId: number,
@@ -29,7 +30,7 @@ export function startFileWatching(
 	const interval = setInterval(() => {
 		if (!agents.has(agentId)) { clearInterval(interval); return; }
 		readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
-	}, 2000);
+	}, FILE_WATCHER_POLL_INTERVAL_MS);
 	pollingTimers.set(agentId, interval);
 }
 
@@ -106,7 +107,7 @@ export function ensureProjectScan(
 			agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
 			webview, persistAgents,
 		);
-	}, 1000);
+	}, PROJECT_SCAN_INTERVAL_MS);
 }
 
 function scanForNewJsonlFiles(

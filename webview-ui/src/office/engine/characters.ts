@@ -2,14 +2,15 @@ import { CharacterState, Direction, TILE_SIZE } from '../types.js'
 import type { Character, Seat, SpriteData, TileType as TileTypeVal } from '../types.js'
 import type { CharacterSprites } from '../sprites/spriteData.js'
 import { findPath } from '../layout/tileMap.js'
-
-const WALK_SPEED = 48 // pixels per second
-const WALK_FRAME_DURATION = 0.15
-const TYPE_FRAME_DURATION = 0.3
-const WANDER_PAUSE_MIN = 2.0
-const WANDER_PAUSE_MAX = 5.0
-const SEAT_SIT_MIN = 3.0
-const SEAT_SIT_MAX = 5.0
+import {
+  WALK_SPEED_PX_PER_SEC,
+  WALK_FRAME_DURATION_SEC,
+  TYPE_FRAME_DURATION_SEC,
+  WANDER_PAUSE_MIN_SEC,
+  WANDER_PAUSE_MAX_SEC,
+  SEAT_SIT_MIN_SEC,
+  SEAT_SIT_MAX_SEC,
+} from '../../constants.js'
 
 /** Tools that show reading animation instead of typing */
 const READING_TOOLS = new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch'])
@@ -88,8 +89,8 @@ export function updateCharacter(
 
   switch (ch.state) {
     case CharacterState.TYPE: {
-      if (ch.frameTimer >= TYPE_FRAME_DURATION) {
-        ch.frameTimer -= TYPE_FRAME_DURATION
+      if (ch.frameTimer >= TYPE_FRAME_DURATION_SEC) {
+        ch.frameTimer -= TYPE_FRAME_DURATION_SEC
         ch.frame = (ch.frame + 1) % 2
       }
       // If no longer active, stand up and start wandering (after seatTimer expires)
@@ -101,7 +102,7 @@ export function updateCharacter(
         ch.state = CharacterState.IDLE
         ch.frame = 0
         ch.frameTimer = 0
-        ch.wanderTimer = randomRange(WANDER_PAUSE_MIN, WANDER_PAUSE_MAX)
+        ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC)
       }
       break
     }
@@ -151,15 +152,15 @@ export function updateCharacter(
             ch.frameTimer = 0
           }
         }
-        ch.wanderTimer = randomRange(WANDER_PAUSE_MIN, WANDER_PAUSE_MAX)
+        ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC)
       }
       break
     }
 
     case CharacterState.WALK: {
       // Walk animation
-      if (ch.frameTimer >= WALK_FRAME_DURATION) {
-        ch.frameTimer -= WALK_FRAME_DURATION
+      if (ch.frameTimer >= WALK_FRAME_DURATION_SEC) {
+        ch.frameTimer -= WALK_FRAME_DURATION_SEC
         ch.frame = (ch.frame + 1) % 4
       }
 
@@ -189,14 +190,14 @@ export function updateCharacter(
             if (seat && ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {
               ch.state = CharacterState.TYPE
               ch.dir = seat.facingDir
-              ch.seatTimer = randomRange(SEAT_SIT_MIN, SEAT_SIT_MAX)
+              ch.seatTimer = randomRange(SEAT_SIT_MIN_SEC, SEAT_SIT_MAX_SEC)
               ch.frame = 0
               ch.frameTimer = 0
               break
             }
           }
           ch.state = CharacterState.IDLE
-          ch.wanderTimer = randomRange(WANDER_PAUSE_MIN, WANDER_PAUSE_MAX)
+          ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC)
         }
         ch.frame = 0
         ch.frameTimer = 0
@@ -207,7 +208,7 @@ export function updateCharacter(
       const nextTile = ch.path[0]
       ch.dir = directionBetween(ch.tileCol, ch.tileRow, nextTile.col, nextTile.row)
 
-      ch.moveProgress += (WALK_SPEED / TILE_SIZE) * dt
+      ch.moveProgress += (WALK_SPEED_PX_PER_SEC / TILE_SIZE) * dt
 
       const fromCenter = tileCenter(ch.tileCol, ch.tileRow)
       const toCenter = tileCenter(nextTile.col, nextTile.row)

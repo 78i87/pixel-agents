@@ -6,6 +6,7 @@ VS Code extension with embedded React webview: pixel art office where AI agents 
 
 ```
 src/                          — Extension backend (Node.js, VS Code API)
+  constants.ts                — All backend magic numbers/strings (timing, truncation, asset parsing, VS Code IDs)
   extension.ts                — Entry: activate(), deactivate()
   ArcadiaViewProvider.ts      — WebviewViewProvider, message dispatch, asset loading
   assetLoader.ts              — PNG parsing, sprite conversion, catalog building
@@ -16,6 +17,7 @@ src/                          — Extension backend (Node.js, VS Code API)
   types.ts                    — Shared interfaces (AgentState, PersistedAgent)
 
 webview-ui/src/               — React + TypeScript (Vite)
+  constants.ts                — All webview magic numbers/strings (grid, animation, rendering, camera, zoom, editor, game logic)
   App.tsx                     — Composition root, hooks + components + EditActionBar
   hooks/
     useExtensionMessages.ts   — Message handler + agent/tool state
@@ -27,7 +29,7 @@ webview-ui/src/               — React + TypeScript (Vite)
     SettingsModal.tsx          — Debug toggle popup
     DebugView.tsx              — Debug overlay
   office/
-    types.ts                  — Constants (TILE_SIZE=16, MATRIX_EFFECT_DURATION=0.3, DEFAULT 20×11, MAX 64×64), interfaces, OfficeLayout, FloorColor
+    types.ts                  — Interfaces (OfficeLayout, FloorColor, Character, etc.) + re-exports constants from constants.ts
     toolUtils.ts              — STATUS_TO_TOOL mapping, extractToolName(), defaultZoom()
     colorize.ts               — Dual-mode color module: Colorize (grayscale→HSL) + Adjust (HSL shift)
     floorTiles.ts             — Floor sprite storage + colorized cache
@@ -176,6 +178,16 @@ Build: type-check → lint → esbuild (extension) → vite (webview). F5 for Ex
 - No `enum` (`erasableSyntaxOnly`) — use `as const` objects
 - `import type` required for type-only imports (`verbatimModuleSyntax`)
 - `noUnusedLocals` / `noUnusedParameters`
+
+## Constants
+
+All magic numbers and strings are centralized — never add inline constants to source files:
+
+- **Extension backend**: `src/constants.ts` — timing intervals, display truncation limits, PNG/asset parsing values, VS Code command/key identifiers
+- **Webview**: `webview-ui/src/constants.ts` — grid/layout sizes, character animation speeds, matrix effect params, rendering offsets/colors, camera, zoom, editor defaults, game logic thresholds
+- **CSS styling**: `webview-ui/src/index.css` `:root` block — `--pixel-*` custom properties for UI colors, backgrounds, borders, z-indices used in React inline styles
+- **Canvas overlay colors** (rgba strings for seats, grids, ghosts, buttons) live in the webview constants file since they're used in canvas 2D context, not CSS
+- `webview-ui/src/office/types.ts` re-exports grid/layout constants (`TILE_SIZE`, `DEFAULT_COLS`, etc.) from `constants.ts` for backward compatibility — import from either location
 
 ## Key Patterns
 

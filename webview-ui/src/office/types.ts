@@ -1,9 +1,11 @@
-export const TILE_SIZE = 16
-export const MATRIX_EFFECT_DURATION = 0.3
-export const DEFAULT_COLS = 20
-export const DEFAULT_ROWS = 11
-export const MAX_COLS = 64
-export const MAX_ROWS = 64
+export {
+  TILE_SIZE,
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  MAX_COLS,
+  MAX_ROWS,
+  MATRIX_EFFECT_DURATION_SEC as MATRIX_EFFECT_DURATION,
+} from '../constants.js'
 
 export const TileType = {
   WALL: 0,

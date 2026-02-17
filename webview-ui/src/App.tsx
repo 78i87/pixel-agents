@@ -8,6 +8,7 @@ import { EditTool } from './office/types.js'
 import { isRotatable } from './office/layout/furnitureCatalog.js'
 import { vscode } from './vscodeApi.js'
 import { useExtensionMessages } from './hooks/useExtensionMessages.js'
+import { PULSE_ANIMATION_DURATION_SEC } from './constants.js'
 import { useEditorActions } from './hooks/useEditorActions.js'
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js'
 import { ZoomControls } from './components/ZoomControls.js'
@@ -28,8 +29,8 @@ function getOfficeState(): OfficeState {
 const actionBarBtnStyle: React.CSSProperties = {
   padding: '4px 10px',
   fontSize: '22px',
-  background: 'rgba(255, 255, 255, 0.08)',
-  color: 'rgba(255, 255, 255, 0.7)',
+  background: 'var(--pixel-btn-bg)',
+  color: 'var(--pixel-text-dim)',
   border: '2px solid transparent',
   borderRadius: 0,
   cursor: 'pointer',
@@ -37,7 +38,7 @@ const actionBarBtnStyle: React.CSSProperties = {
 
 const actionBarBtnDisabled: React.CSSProperties = {
   ...actionBarBtnStyle,
-  opacity: 0.35,
+  opacity: 'var(--pixel-btn-disabled-opacity)',
   cursor: 'default',
 }
 
@@ -54,15 +55,15 @@ function EditActionBar({ editor, editorState: es }: { editor: ReturnType<typeof 
         top: 8,
         left: '50%',
         transform: 'translateX(-50%)',
-        zIndex: 50,
+        zIndex: 'var(--pixel-controls-z)',
         display: 'flex',
         gap: 4,
         alignItems: 'center',
-        background: '#1e1e2e',
-        border: '2px solid #4a4a6a',
+        background: 'var(--pixel-bg)',
+        border: '2px solid var(--pixel-border)',
         borderRadius: 0,
         padding: '4px 8px',
-        boxShadow: '2px 2px 0px #0a0a14',
+        boxShadow: 'var(--pixel-shadow)',
       }}
     >
       <button
@@ -96,9 +97,9 @@ function EditActionBar({ editor, editorState: es }: { editor: ReturnType<typeof 
         </button>
       ) : (
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: '22px', color: '#ecc' }}>Reset?</span>
+          <span style={{ fontSize: '22px', color: 'var(--pixel-reset-text)' }}>Reset?</span>
           <button
-            style={{ ...actionBarBtnStyle, background: '#a33', color: '#fff' }}
+            style={{ ...actionBarBtnStyle, background: 'var(--pixel-danger-bg)', color: '#fff' }}
             onClick={() => { setShowResetConfirm(false); editor.handleReset() }}
           >
             Yes
@@ -187,7 +188,7 @@ function App() {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
         }
-        .arcadia-pulse { animation: arcadia-pulse 1.5s ease-in-out infinite; }
+        .arcadia-pulse { animation: arcadia-pulse ${PULSE_ANIMATION_DURATION_SEC}s ease-in-out infinite; }
       `}</style>
 
       <OfficeCanvas
@@ -214,7 +215,7 @@ function App() {
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%)',
+          background: 'var(--pixel-vignette)',
           pointerEvents: 'none',
           zIndex: 40,
         }}
@@ -240,13 +241,13 @@ function App() {
             left: '50%',
             transform: editor.isDirty ? 'translateX(calc(-50% + 100px))' : 'translateX(-50%)',
             zIndex: 49,
-            background: '#3278c8',
+            background: 'var(--pixel-hint-bg)',
             color: '#fff',
             fontSize: '20px',
             padding: '3px 8px',
             borderRadius: 0,
-            border: '2px solid #5a8cff',
-            boxShadow: '2px 2px 0px #0a0a14',
+            border: '2px solid var(--pixel-accent)',
+            boxShadow: 'var(--pixel-shadow)',
             pointerEvents: 'none',
             whiteSpace: 'nowrap',
           }}

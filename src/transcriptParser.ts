@@ -7,6 +7,12 @@ import {
 	clearAgentActivity,
 	startPermissionTimer,
 } from './timerManager.js';
+import {
+	WAITING_TIMER_DELAY_MS,
+	TOOL_DONE_DELAY_MS,
+	BASH_COMMAND_DISPLAY_MAX_LENGTH,
+	TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
+} from './constants.js';
 
 export const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'AskUserQuestion']);
 
@@ -18,7 +24,7 @@ export function formatToolStatus(toolName: string, input: Record<string, unknown
 		case 'Write': return `Writing ${base(input.file_path)}`;
 		case 'Bash': {
 			const cmd = (input.command as string) || '';
-			return `Running: ${cmd.length > 30 ? cmd.slice(0, 30) + '\u2026' : cmd}`;
+			return `Running: ${cmd.length > BASH_COMMAND_DISPLAY_MAX_LENGTH ? cmd.slice(0, BASH_COMMAND_DISPLAY_MAX_LENGTH) + '\u2026' : cmd}`;
 		}
 		case 'Glob': return 'Searching files';
 		case 'Grep': return 'Searching code';
@@ -26,7 +32,7 @@ export function formatToolStatus(toolName: string, input: Record<string, unknown
 		case 'WebSearch': return 'Searching the web';
 		case 'Task': {
 			const desc = typeof input.description === 'string' ? input.description : '';
-			return desc ? `Subtask: ${desc.length > 40 ? desc.slice(0, 40) + '\u2026' : desc}` : 'Running subtask';
+			return desc ? `Subtask: ${desc.length > TASK_DESCRIPTION_DISPLAY_MAX_LENGTH ? desc.slice(0, TASK_DESCRIPTION_DISPLAY_MAX_LENGTH) + '\u2026' : desc}` : 'Running subtask';
 		}
 		case 'AskUserQuestion': return 'Waiting for your answer';
 		case 'EnterPlanMode': return 'Planning';
@@ -84,7 +90,7 @@ export function processTranscriptLine(
 			} else {
 				const hasText = blocks.some(b => b.type === 'text');
 				if (hasText) {
-					startWaitingTimer(agentId, 2000, agents, waitingTimers, webview);
+					startWaitingTimer(agentId, WAITING_TIMER_DELAY_MS, agents, waitingTimers, webview);
 				}
 			}
 		} else if (record.type === 'progress') {
@@ -119,7 +125,7 @@ export function processTranscriptLine(
 									id: agentId,
 									toolId,
 								});
-							}, 300);
+							}, TOOL_DONE_DELAY_MS);
 						}
 					}
 				} else {

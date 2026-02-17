@@ -13,6 +13,7 @@ import {
 } from './agentManager.js';
 import { ensureProjectScan } from './fileWatcher.js';
 import { loadFurnitureAssets, sendAssetsToWebview, loadFloorTiles, sendFloorTilesToWebview, loadWallTiles, sendWallTilesToWebview, loadCharacterSprites, sendCharacterSpritesToWebview } from './assetLoader.js';
+import { WORKSPACE_KEY_AGENT_SEATS, WORKSPACE_KEY_LAYOUT } from './constants.js';
 
 export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 	nextAgentId = { current: 1 };
@@ -73,9 +74,9 @@ export class ArcadiaViewProvider implements vscode.WebviewViewProvider {
 			} else if (message.type === 'saveAgentSeats') {
 				// Store seat assignments in a separate key (never touched by persistAgents)
 				console.log(`[Arcadia] saveAgentSeats:`, JSON.stringify(message.seats));
-				this.context.workspaceState.update('arcadia.agentSeats', message.seats);
+				this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
 			} else if (message.type === 'saveLayout') {
-				this.context.workspaceState.update('arcadia.layout', message.layout);
+				this.context.workspaceState.update(WORKSPACE_KEY_LAYOUT, message.layout);
 			} else if (message.type === 'webviewReady') {
 				restoreAgents(
 					this.context,
